@@ -112,7 +112,7 @@ const ex=id=>structuredClone(BASE_EX.find(e=>e.id===id));
 
 const PRESETS=[
   {id:'full',name:'Full Body Beginner',label:'Starter',desc:'Five simple movements. Built for a complete beginner walking in today.',days:'Day 1',exercises:['squat','press','raise','chest','row'].map(ex)},
-  {id:'push',name:'Push Day A',label:'Push',desc:'Chest, shoulders, and triceps with AR support on presses and raises.',days:'PPL',exercises:['press','chest','raise','tricep'].map(ex)},
+  {id:'push',name:'Push Day A',label:'Push',desc:'Chest, shoulders, and triceps with AR support on presses and raises.',days:'PPL',exercises:['squat','press','chest','raise','tricep'].map(ex)},
   {id:'pull',name:'Pull Day A',label:'Pull',desc:'Back and biceps. Beginner-safe pulling with simple cues.',days:'PPL',exercises:['lat','row','curl'].map(ex)},
   {id:'legs',name:'Leg Day A',label:'Legs',desc:'Stable lower-body work. Squat pattern, leg press, and core.',days:'PPL',exercises:['squat','legpress','plank'].map(ex)}
 ];
@@ -1222,8 +1222,15 @@ function analyze(lm){
   let L={sh:lm[11],el:lm[13],wr:lm[15],hip:lm[23],kn:lm[25],ank:lm[27]};
   let R={sh:lm[12],el:lm[14],wr:lm[16],hip:lm[24],kn:lm[26],ank:lm[28]};
 
-  let visible=[L.sh,R.sh,L.el,R.el,L.wr,R.wr].every(x=>x&&x.visibility>.35);
-  if(!visible){state.status='Step into frame';state.cue='Keep shoulders, elbows and wrists visible.';updateHud();return;}
+  let squat=e.type==='squat';
+  let visible=squat
+    ?[L.sh,R.sh,L.hip,R.hip].every(x=>x&&x.visibility>.3)
+    :[L.sh,R.sh,L.el,R.el,L.wr,R.wr].every(x=>x&&x.visibility>.35);
+  if(!visible){
+    state.status=squat?'Step back':'Step into frame';
+    state.cue=squat?'Show full body — hips need to be visible.':'Keep shoulders, elbows and wrists visible.';
+    updateHud();return;
+  }
 
   let rep=false,stat='Good path',cue='Move smoothly.';
 
@@ -1244,12 +1251,14 @@ function analyze(lm){
   }
   else if(e.type==='squat'){
     let full=[L.hip,R.hip,L.kn,R.kn,L.ank,R.ank].every(x=>x&&x.visibility>.25);
-    if(!full){state.status='Need full body';state.cue='Squats need hips, knees and ankles visible.';updateHud();return;}
-    let hip=(L.hip.y+R.hip.y)/2,kn=(L.kn.y+R.kn.y)/2;
-    if(state.repPhase==='down'&&hip>kn-.02)state.repPhase='bottom';
-    if(state.repPhase==='bottom'&&hip<kn-.16){rep=true;state.repPhase='down';}
-    cue=state.repPhase==='bottom'?'Good depth — drive through your heels.':'Reach depth. Knees track forward.';
-    stat=state.repPhase==='bottom'?'Depth reached':'Squat tracking';
+    if(!full){state.status='Step back';state.cue='Full body needed — show knees and ankles.';updateHud();return;}
+    let kneeAng=(angle(L.hip,L.kn,L.ank)+angle(R.hip,R.kn,R.ank))/2;
+    let kneesW=Math.abs(L.kn.x-R.kn.x),anksW=Math.abs(L.ank.x-R.ank.x);
+    let kneeCave=anksW>.05&&kneesW<anksW*.75;
+    if(state.repPhase==='down'&&kneeAng<95)state.repPhase='bottom';
+    if(state.repPhase==='bottom'&&kneeAng>155){rep=true;state.repPhase='down';}
+    cue=kneeCave?'Push knees out — track over toes.':state.repPhase==='bottom'?'Drive through heels. Stand tall.':'Sit back and down. Chest tall.';
+    stat=kneeCave?'Knees caving':state.repPhase==='bottom'?'Depth reached':'Squat tracking';
   }
   else{
     let elbow=(angle(L.sh,L.el,L.wr)+angle(R.sh,R.el,R.wr))/2;

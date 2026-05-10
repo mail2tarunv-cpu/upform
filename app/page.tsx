@@ -5,12 +5,54 @@ import { useState, useEffect, useRef, useCallback } from "react";
 const DAYS   = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-const WORKOUT = {
-  name: "Shoulder Day",
-  exercises: [
-    { name: "Shoulder Press", sets: 3, reps: 12, type: "press" as const },
-    { name: "Lateral Raises",  sets: 3, reps: 12, type: "raise" as const },
-  ],
+const WORKOUTS = [
+  {
+    name: "Shoulder & Squat Day",
+    exercises: [
+      { name: "Squats",         sets: 3, reps: 12, type: "squat"    as const },
+      { name: "Shoulder Press", sets: 3, reps: 12, type: "press"    as const },
+      { name: "Lateral Raises", sets: 3, reps: 12, type: "raise"    as const },
+    ],
+  },
+  {
+    name: "Legs & Core Day",
+    exercises: [
+      { name: "Squats",         sets: 4, reps: 10, type: "squat"    as const },
+      { name: "Leg Press",      sets: 3, reps: 12, type: "legpress" as const },
+      { name: "Lateral Raises", sets: 3, reps: 15, type: "raise"    as const },
+    ],
+  },
+  {
+    name: "Push & Legs Day",
+    exercises: [
+      { name: "Shoulder Press", sets: 4, reps: 10, type: "press"    as const },
+      { name: "Lateral Raises", sets: 3, reps: 12, type: "raise"    as const },
+      { name: "Squats",         sets: 2, reps: 12, type: "squat"    as const },
+    ],
+  },
+  {
+    name: "Full Body A",
+    exercises: [
+      { name: "Squats",         sets: 3, reps: 12, type: "squat" as const },
+      { name: "Shoulder Press", sets: 3, reps: 10, type: "press" as const },
+      { name: "Lateral Raises", sets: 2, reps: 12, type: "raise" as const },
+    ],
+  },
+  {
+    name: "Full Body B",
+    exercises: [
+      { name: "Squats",         sets: 4, reps: 10, type: "squat" as const },
+      { name: "Lateral Raises", sets: 3, reps: 12, type: "raise" as const },
+      { name: "Shoulder Press", sets: 2, reps: 10, type: "press" as const },
+    ],
+  },
+];
+
+const DEFAULT_DAYS: Record<number, number[]> = {
+  2: [1, 4],
+  3: [1, 3, 5],
+  4: [1, 2, 4, 5],
+  5: [1, 2, 3, 4, 5],
 };
 
 const MODES = [
@@ -19,11 +61,12 @@ const MODES = [
   { id: "glasses", icon: "🥽", label: "Check-in Meta Glasses", sub: "Hands-free tracking" },
 ];
 
-type Screen     = "home" | "workout" | "camera";
+type Screen     = "home" | "routines" | "profile" | "workout" | "camera";
 type PermState  = "idle" | "granted" | "denied";
 type RepFlash   = "good" | "bad" | null;
 type FormStatus = "good" | "bad" | "neutral";
-type PressPhase = "READY_BOTTOM" | "PRESSING_UP" | "TOP_REACHED" | "LOWERING";
+type PressPhase  = "READY_BOTTOM" | "PRESSING_UP" | "TOP_REACHED" | "LOWERING";
+type SquatPhase  = "STANDING" | "DESCENDING" | "BOTTOM" | "ASCENDING";
 
 function calcAngle(
   a: { x: number; y: number },
@@ -77,8 +120,12 @@ export default function Page() {
   const todayIdx = today.getDay();
 
   const [onboarded,    setOnboarded]    = useState<boolean | null>(null); // null = checking
-  const [onboardStep,  setOnboardStep]  = useState(0);                   // 0-3 intro, 4 name, 5-8 profile, 9 loader
-  const [userName,     setUserName]     = useState("");
+  const [onboardStep,  setOnboardStep]  = useState(0);                   // 0-3 intro, 4 name, 5-8 profile, 9 schedule, 10 loader
+  const [selectedDays, setSelectedDays] = useState<number[]>([1, 3, 5]); // day-of-week indices
+  const [daysPerWeek,  setDaysPerWeek]  = useState(3);
+  const [userName,     setUserName]     = useState(() =>
+    typeof window !== "undefined" ? (localStorage.getItem("upform_name") || "") : ""
+  );
   const [heightVal,    setHeightVal]    = useState("");
   const [weightVal,    setWeightVal]    = useState("");
   const [ageVal,       setAgeVal]       = useState("");
@@ -98,11 +145,20 @@ export default function Page() {
   const [noBody,     setNoBody]     = useState(false);
   const [muted,        setMuted]        = useState(false);
   const [cornerStatus, setCornerStatus] = useState<"good"|"bad"|"neutral">("neutral");
+  const [workoutCount,  setWorkoutCount]  = useState(0);
+  const [streak,        setStreak]        = useState(0);
   const [restActive,        setRestActive]        = useState(false);
   const [restSeconds,       setRestSeconds]       = useState(60);
+  const [lastSetStats,      setLastSetStats]      = useState<{ good: number; bad: number; target: number } | null>(null);
   const [showExerciseIntro, setShowExerciseIntro] = useState(false);
   const [paused,            setPaused]            = useState(false);
   const [voiceCmd,          setVoiceCmd]          = useState<{ label: string; icon: string } | null>(null);
+  const [calSelectedDay,    setCalSelectedDay]    = useState(today.getDay());
+  const [legPressIntro,     setLegPressIntro]     = useState(false);
+
+  const activeWorkoutRef = useRef(WORKOUTS[0]);
+  const importFileRef    = useRef<HTMLInputElement>(null);
+  const prevScreenRef    = useRef<Screen>("home");
 
   const videoRef      = useRef<HTMLVideoElement>(null);
   const canvasRef     = useRef<HTMLCanvasElement>(null);
@@ -119,10 +175,12 @@ export default function Page() {
     pressPhase: "READY_BOTTOM" as PressPhase,
     topReached: false, topReachedAt: 0, topCueSpoken: false,
     peakWristY: 1.0,   // lowest y (= highest point) reached during the press
+    // squat fields
+    squatPhase: "STANDING" as SquatPhase,
     // common
-    count: 0, badFormThisRep: false, lastRepTime: 0, badFormSpoken: false,
+    count: 0, badReps: 0, badFormThisRep: false, lastRepTime: 0, badFormSpoken: false,
     unevenFrames: 0,
-    badFormType: "" as "" | "tooHigh" | "uneven" | "tooLow" | "incomplete",
+    badFormType: "" as "" | "tooHigh" | "uneven" | "tooLow" | "incomplete" | "kneeCave",
   });
   const cornerStatusRef  = useRef<"good"|"bad"|"neutral">("neutral");
   const restActiveRef    = useRef(false);
@@ -142,7 +200,7 @@ export default function Page() {
   // Prevents the displayed cue text from changing more than once every 4 s
   const cueLockRef    = useRef(0);
 
-  const ex = WORKOUT.exercises[exIdx];
+  const ex = activeWorkoutRef.current.exercises[exIdx];
 
   const stopCamera = useCallback(() => {
     streamRef.current?.getTracks().forEach(t => t.stop());
@@ -177,7 +235,8 @@ export default function Page() {
       phase: "down", upPhaseCued: false,
       pressPhase: "READY_BOTTOM", topReached: false, topReachedAt: 0, topCueSpoken: false,
       peakWristY: 1.0,
-      count: 0, badFormThisRep: false, lastRepTime: 0, badFormSpoken: false,
+      squatPhase: "STANDING" as SquatPhase,
+      count: 0, badReps: 0, badFormThisRep: false, lastRepTime: 0, badFormSpoken: false,
       unevenFrames: 0, badFormType: "",
     };
     // Preserve session-level cue counts across set changes
@@ -235,6 +294,14 @@ export default function Page() {
     }
     setOnboarded(localStorage.getItem("upform_onboarded") === "true");
     setUserName(localStorage.getItem("upform_name") || "");
+    const savedDays = localStorage.getItem("upform_selected_days");
+    if (savedDays) setSelectedDays(JSON.parse(savedDays));
+    const savedDPW = localStorage.getItem("upform_days_per_week");
+    if (savedDPW) setDaysPerWeek(parseInt(savedDPW));
+    const savedCount = localStorage.getItem("upform_workout_count");
+    if (savedCount) setWorkoutCount(parseInt(savedCount));
+    const savedStreak = localStorage.getItem("upform_streak");
+    if (savedStreak) setStreak(parseInt(savedStreak));
   }, []);
 
   // Keep refs in sync so async callbacks (intervals) read fresh values
@@ -248,13 +315,13 @@ export default function Page() {
     setRestActive(false);
     const curSet   = currentSetRef.current;
     const curExIdx = exIdxRef.current;
-    const curEx    = WORKOUT.exercises[curExIdx];
+    const curEx    = activeWorkoutRef.current.exercises[curExIdx];
     resetRep();
     if (curSet < curEx.sets) {
       speak(`Set ${curSet + 1}. Let's go!`, true);
       setCurrentSet(s => s + 1);
-    } else if (curExIdx < WORKOUT.exercises.length - 1) {
-      speak(`Next exercise: ${WORKOUT.exercises[curExIdx + 1].name}. Let's go!`, true);
+    } else if (curExIdx < activeWorkoutRef.current.exercises.length - 1) {
+      speak(`Next exercise: ${activeWorkoutRef.current.exercises[curExIdx + 1].name}. Let's go!`, true);
       setExIdx(i => i + 1);
       setCurrentSet(1);
     } else {
@@ -366,6 +433,16 @@ export default function Page() {
     }
   }, [exIdx, screen, permState]);
 
+  // Show leg press muscle/placement intro when that exercise becomes active
+  useEffect(() => {
+    const curEx = activeWorkoutRef.current.exercises[exIdx];
+    if (screen === "camera" && permState === "granted" && curEx?.type === "legpress") {
+      setLegPressIntro(true);
+    } else {
+      setLegPressIntro(false);
+    }
+  }, [exIdx, screen, permState]);
+
   // Start voice recognition when camera is live; stop on exit
   useEffect(() => {
     if (screen === "camera" && permState === "granted") {
@@ -380,11 +457,16 @@ export default function Page() {
   useEffect(() => {
     if (reps < ex.reps || restActive || screen !== "camera" || permState !== "granted") return;
     const t = setTimeout(() => {
+      setLastSetStats({
+        good:   repStateRef.current.count,
+        bad:    repStateRef.current.badReps,
+        target: ex.reps,
+      });
       restActiveRef.current = true;
       setRestActive(true);
     }, 1400);
     return () => clearTimeout(t);
-  }, [reps, ex.reps, restActive, screen, permState]);
+  }, [reps, ex.reps, restActive, screen, permState, ex.reps]);
 
   // Countdown timer
   useEffect(() => {
@@ -411,7 +493,8 @@ export default function Page() {
       phase: "down", upPhaseCued: false,
       pressPhase: "READY_BOTTOM", topReached: false, topReachedAt: 0, topCueSpoken: false,
       peakWristY: 1.0,
-      count: 0, badFormThisRep: false, lastRepTime: 0, badFormSpoken: false,
+      squatPhase: "STANDING" as SquatPhase,
+      count: 0, badReps: 0, badFormThisRep: false, lastRepTime: 0, badFormSpoken: false,
       unevenFrames: 0, badFormType: "",
     };
     coachRef.current = {
@@ -432,10 +515,13 @@ export default function Page() {
     let active = true;
 
     const analyze = (lm: any[], canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D) => {
-      const exercise  = WORKOUT.exercises[exIdx];
-      const L         = { sh: lm[11], el: lm[13], wr: lm[15] };
-      const R         = { sh: lm[12], el: lm[14], wr: lm[16] };
-      const visible   = [L.sh, R.sh, L.el, R.el, L.wr, R.wr].every(p => p && p.visibility > 0.35);
+      const exercise  = activeWorkoutRef.current.exercises[exIdx];
+      if (exercise.type === "legpress") return; // manual counting — no pose detection
+      const L         = { sh: lm[11], el: lm[13], wr: lm[15], hip: lm[23], kn: lm[25], ank: lm[27] };
+      const R         = { sh: lm[12], el: lm[14], wr: lm[16], hip: lm[24], kn: lm[26], ank: lm[28] };
+      const visible   = exercise.type === "squat"
+        ? [L.sh, R.sh, L.hip, R.hip, L.kn, R.kn].every(p => p && p.visibility > 0.3)
+        : [L.sh, R.sh, L.el, R.el, L.wr, R.wr].every(p => p && p.visibility > 0.35);
       // speak + coachRef are stable refs, safe in this closure
       const speakFn   = speak;
       const coach     = coachRef.current;
@@ -455,11 +541,13 @@ export default function Page() {
       // ── STEP 1: Position & visibility guidance ─────────────────
       if (!visible) {
         setNoBody(true);
-        showCue("Keep upper body visible");
+        showCue(exercise.type === "squat" ? "Step back — need to see full body" : "Keep upper body visible");
         if (nowMs - coach.lastCueTime > 5000 && coach.positionCuesSaid < 2) {
           coach.lastCueTime = nowMs;
           coach.positionCuesSaid++;
-          speakFn("Step back and face the camera. I need to see your shoulders, arms, and hands.");
+          speakFn(exercise.type === "squat"
+            ? "Step back so I can see your full body — hips and knees need to be visible."
+            : "Step back and face the camera. I need to see your shoulders, arms, and hands.");
         }
         return;
       }
@@ -489,6 +577,11 @@ export default function Page() {
             "Great, I can see you. Starting Shoulder Press. " +
             "Hold weights at shoulder height, elbows out. " +
             "Press straight up until arms are extended, then lower slowly back to shoulder height. Go!"
+          );
+        } else if (exercise.type === "squat") {
+          speakFn(
+            "Squats. Feet shoulder-width apart, toes slightly out. " +
+            "Sit back and down until thighs are parallel, then drive through your heels to stand. Go!"
           );
         } else {
           speakFn(
@@ -734,16 +827,120 @@ export default function Page() {
           ctx.fillText(`${Math.round(ang)}°`, el.x*W + 26, el.y*H + 5);
           ctx.restore();
         });
+
+      } else if (exercise.type === "squat") {
+        // ── SQUAT DETECTION ──────────────────────────────────────
+        const lowerVisible = [L.ank, R.ank].every(p => p && p.visibility > 0.25);
+        if (!lowerVisible) {
+          showCue("Step back — need to see ankles too");
+          return;
+        }
+
+        const angL     = calcAngle(L.hip, L.kn, L.ank);
+        const angR     = calcAngle(R.hip, R.kn, R.ank);
+        const kneeAvg  = (angL + angR) / 2;
+
+        // Knee cave: knees narrower than 75% of ankle width
+        const kneesW   = Math.abs(L.kn.x - R.kn.x);
+        const anksW    = Math.abs(L.ank.x - R.ank.x);
+        const kneeCave = anksW > 0.05 && kneesW < anksW * 0.75;
+
+        const prevSquatPhase = rs.squatPhase;
+        switch (rs.squatPhase) {
+          case "STANDING":
+            if (kneeAvg < 145) rs.squatPhase = "DESCENDING";
+            break;
+          case "DESCENDING":
+            if (kneeAvg < 110)  rs.squatPhase = "BOTTOM";
+            else if (kneeAvg > 160) rs.squatPhase = "STANDING";
+            break;
+          case "BOTTOM":
+            if (kneeAvg > 120)  rs.squatPhase = "ASCENDING";
+            break;
+          case "ASCENDING":
+            if (kneeAvg > 145) { rep = true; rs.squatPhase = "STANDING"; }
+            break;
+        }
+
+        if (prevSquatPhase !== "BOTTOM" && rs.squatPhase === "BOTTOM") {
+          speakFn("Good depth — drive through your heels.", true);
+        }
+
+        if (kneeCave) {
+          bad = true; rs.badFormThisRep = true; rs.badFormType = "kneeCave";
+          cue = "Push knees out — track over toes";
+          if (!rs.badFormSpoken) {
+            rs.badFormSpoken = true;
+            speakFn("Push your knees out — track them over your toes.", true);
+          }
+        } else {
+          const cueMap: Record<SquatPhase, string> = {
+            "STANDING"   : "Sit back and down — reach depth",
+            "DESCENDING" : "Keep going — reach parallel",
+            "BOTTOM"     : "Good depth — drive through heels",
+            "ASCENDING"  : "Stand tall — squeeze glutes",
+          };
+          cue = cueMap[rs.squatPhase];
+        }
+
+        // ── CANVAS: depth target line at knee height ──────────────
+        const kny      = (L.kn.y + R.kn.y) / 2;
+        const atDepth  = rs.squatPhase === "BOTTOM" || rs.squatPhase === "ASCENDING";
+        const lineY    = kny * H;
+        ctx.save();
+        ctx.setLineDash([12, 8]);
+        ctx.lineWidth   = 2;
+        ctx.strokeStyle = atDepth ? "rgba(80,220,130,.85)" : "rgba(255,200,80,.8)";
+        ctx.beginPath();
+        ctx.moveTo(W * 0.04, lineY); ctx.lineTo(W * 0.96, lineY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.font      = "bold 13px system-ui";
+        ctx.fillStyle = atDepth ? "rgba(80,220,130,.9)" : "rgba(255,200,80,.9)";
+        ctx.fillText("squat to here", W * 0.05, lineY - 8);
+        ctx.restore();
+
+        // ── CANVAS: leg lines hip → knee → ankle ─────────────────
+        const legColor = kneeCave ? "rgba(255,60,60,.92)"
+          : atDepth ? "rgba(80,220,130,.92)" : "rgba(255,200,80,.92)";
+
+        const drawLegLines = (hip: any, kn: any, ank: any) => {
+          ctx.save();
+          ctx.lineWidth = 5; ctx.lineCap = "round"; ctx.strokeStyle = legColor;
+          ctx.beginPath(); ctx.moveTo(hip.x*W, hip.y*H); ctx.lineTo(kn.x*W, kn.y*H); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(kn.x*W,  kn.y*H);  ctx.lineTo(ank.x*W, ank.y*H); ctx.stroke();
+          [{ pt: hip, r: 5, c: "white" }, { pt: kn, r: 8, c: legColor }, { pt: ank, r: 5, c: "white" }]
+            .forEach(({ pt, r, c }) => {
+              ctx.beginPath(); ctx.fillStyle = c;
+              ctx.arc(pt.x*W, pt.y*H, r, 0, Math.PI*2); ctx.fill();
+            });
+          ctx.restore();
+        };
+        drawLegLines(L.hip, L.kn, L.ank);
+        drawLegLines(R.hip, R.kn, R.ank);
+
+        // ── CANVAS: knee angle arcs ───────────────────────────────
+        [{ kn: L.kn, ang: angL }, { kn: R.kn, ang: angR }].forEach(({ kn, ang }) => {
+          ctx.save();
+          ctx.lineWidth   = 3;
+          ctx.strokeStyle = ang <= 92 ? "rgba(80,220,130,.9)" : "rgba(255,200,80,.9)";
+          ctx.beginPath();
+          ctx.arc(kn.x*W, kn.y*H, 22, -Math.PI/2, -Math.PI/2 + (ang * Math.PI) / 180);
+          ctx.stroke();
+          ctx.font = "bold 12px system-ui"; ctx.fillStyle = "white";
+          ctx.fillText(`${Math.round(ang)}°`, kn.x*W + 26, kn.y*H + 5);
+          ctx.restore();
+        });
       }
 
       // Update corner vignette
       const newCorner: "good"|"bad"|"neutral" = bad
         ? "bad"
-        : (exercise.type === "raise"
-            ? rs.phase === "up"
-            : rs.pressPhase === "TOP_REACHED" || rs.pressPhase === "PRESSING_UP")
-          ? "good"
-          : "neutral";
+        : exercise.type === "raise"
+          ? (rs.phase === "up" ? "good" : "neutral")
+          : exercise.type === "squat"
+            ? (rs.squatPhase === "BOTTOM" || rs.squatPhase === "ASCENDING" ? "good" : "neutral")
+            : (rs.pressPhase === "TOP_REACHED" || rs.pressPhase === "PRESSING_UP" ? "good" : "neutral");
       if (newCorner !== cornerStatusRef.current) {
         cornerStatusRef.current = newCorner;
         setCornerStatus(newCorner);
@@ -754,15 +951,20 @@ export default function Page() {
       // ── STEP 4: Prompt when paused ─────────────────────────────
       const pressIdle = exercise.type === "press" && rs.pressPhase === "READY_BOTTOM";
       const raiseIdle = exercise.type === "raise" && rs.phase === "down";
-      if (!rep && (pressIdle || raiseIdle) && nowMs - coach.lastCueTime > 7000) {
+      const squatIdle = exercise.type === "squat" && rs.squatPhase === "STANDING";
+      if (!rep && (pressIdle || raiseIdle || squatIdle) && nowMs - coach.lastCueTime > 7000) {
         coach.lastCueTime = nowMs;
         speakFn(rs.count === 0
           ? (exercise.type === "press"
               ? "When you're ready, press those weights straight up above your head."
-              : "When you're ready, raise your arms out to shoulder height.")
+              : exercise.type === "squat"
+                ? "When you're ready, sit back and squat down to parallel."
+                : "When you're ready, raise your arms out to shoulder height.")
           : (exercise.type === "press"
               ? "Ready for the next rep? Brace your core and press up."
-              : "Next rep — lift your arms out to the sides."));
+              : exercise.type === "squat"
+                ? "Ready for the next rep? Brace your core and squat down."
+                : "Next rep — lift your arms out to the sides."));
       }
 
       // ── STEP 5: Count rep + voice + milestones ─────────────────
@@ -777,6 +979,7 @@ export default function Page() {
           rs.badFormThisRep = false; rs.badFormSpoken = false;
           rs.badFormType    = ""; rs.upPhaseCued = false; rs.phase = "down";
           rs.pressPhase     = "READY_BOTTOM"; rs.topReached = false; rs.topCueSpoken = false; rs.peakWristY = 1.0;
+          rs.squatPhase     = "STANDING";
           coach.lastCueTime = now;
 
           setRepFlash(wasBad ? "bad" : "good");
@@ -784,6 +987,7 @@ export default function Page() {
 
           if (wasBad) {
             // ── BAD REP: don't count, ask them to redo ──
+            rs.badReps += 1;
             speakFn("Wrong rep. Try again.", true);
             // Counter stays the same — no setReps call
           } else {
@@ -926,6 +1130,32 @@ export default function Page() {
     return d;
   });
 
+  const handleImport = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const data = JSON.parse(ev.target?.result as string);
+        if (data.name && Array.isArray(data.exercises)) {
+          localStorage.setItem("upform_custom_workout", JSON.stringify(data));
+          activeWorkoutRef.current = data;
+          alert(`Imported: ${data.name}`);
+        } else {
+          alert("Invalid format. Expected { name, exercises[] }.");
+        }
+      } catch { alert("Could not parse file."); }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  }, []);
+
+  const startRoutine = useCallback((workout: typeof WORKOUTS[0], from: Screen = "home") => {
+    prevScreenRef.current = from;
+    activeWorkoutRef.current = workout;
+    setScreen("workout");
+  }, []);
+
   /* ─── ONBOARDING ───────────────────────────────────────── */
   if (onboarded === null) return null;
 
@@ -933,11 +1163,13 @@ export default function Page() {
     const finish = () => {
       if (userName.trim()) localStorage.setItem("upform_name", userName.trim());
       localStorage.setItem("upform_onboarded", "true");
+      localStorage.setItem("upform_selected_days", JSON.stringify(selectedDays));
+      localStorage.setItem("upform_days_per_week", String(daysPerWeek));
       setOnboarded(true);
     };
 
-    // ── Loader (step 9) — auto-advances after 4.5 s ──
-    if (onboardStep === 9) {
+    // ── Loader (step 10) — auto-advances after 4.5 s ──
+    if (onboardStep === 10) {
       return (
         <_LoaderScreen onDone={finish} />
       );
@@ -950,7 +1182,7 @@ export default function Page() {
       const GOALS = ["Build Muscle","Lose Weight","Improve Endurance","Better Form","Stay Active"];
 
       const advanceProfile = () => {
-        if (isLastProf) { setOnboardStep(9); }
+        if (isLastProf) { setOnboardStep(9); }  // → schedule step
         else            { setOnboardStep(s => s + 1); }
       };
 
@@ -1105,6 +1337,116 @@ export default function Page() {
                 fontSize:14, fontWeight:500, cursor:"pointer", width:"100%",
               }}>
                 Skip for now
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Schedule screen (step 9) ──
+    if (onboardStep === 9) {
+      const FULL_DAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+      const handleFreqSelect = (n: number) => {
+        setDaysPerWeek(n);
+        setSelectedDays(DEFAULT_DAYS[n]);
+      };
+      const toggleDay = (idx: number) => {
+        setSelectedDays(prev => {
+          if (prev.includes(idx)) {
+            if (prev.length <= 1) return prev;
+            return prev.filter(d => d !== idx);
+          }
+          if (prev.length >= daysPerWeek) return prev;
+          return [...prev, idx];
+        });
+      };
+      const canContinue = selectedDays.length === daysPerWeek;
+      return (
+        <div className="app">
+          <div className="mobile-frame" style={{
+            display:"flex", flexDirection:"column",
+            padding:"56px 32px 44px", justifyContent:"space-between", minHeight:"100vh",
+          }}>
+            <div>
+              <button onClick={() => setOnboardStep(8)} style={{
+                background:"none", border:"none", padding:0, marginBottom:32,
+                color:"var(--color-muted-ash)", fontSize:22, cursor:"pointer",
+              }}>←</button>
+              <p style={{ fontSize:13, fontWeight:700, textTransform:"uppercase",
+                letterSpacing:".12em", color:"var(--color-forest-canopy)", margin:"0 0 8px" }}>
+                Your Schedule
+              </p>
+              <h2 style={{ fontSize:28, fontWeight:700, letterSpacing:"-.02em",
+                color:"var(--color-ink)", margin:"0 0 6px" }}>
+                How often do you want to train?
+              </h2>
+              <p style={{ fontSize:14, color:"var(--color-muted-ash)", margin:"0 0 28px" }}>
+                Pick a frequency, then choose which days work for you.
+              </p>
+
+              {/* Frequency buttons */}
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginBottom:28 }}>
+                {[2,3,4,5].map(n => (
+                  <button key={n} onClick={() => handleFreqSelect(n)} style={{
+                    height:52, borderRadius:14, fontSize:18, fontWeight:700, cursor:"pointer",
+                    background: daysPerWeek === n ? "var(--color-forest-canopy)" : "transparent",
+                    border:`1.5px solid ${daysPerWeek === n ? "var(--color-forest-canopy)" : "var(--color-stone)"}`,
+                    color: daysPerWeek === n ? "var(--color-ink)" : "var(--color-muted-ash)",
+                    transition:".15s",
+                  }}>
+                    {n}
+                  </button>
+                ))}
+              </div>
+              <p style={{ fontSize:11, fontWeight:700, textTransform:"uppercase",
+                letterSpacing:".1em", color:"var(--color-muted-ash)", margin:"0 0 12px" }}>
+                Days per week
+              </p>
+
+              {/* Day toggles */}
+              <p style={{ fontSize:13, fontWeight:600, color:"var(--color-ink)", margin:"0 0 12px" }}>
+                Which days? ({selectedDays.length}/{daysPerWeek} selected)
+              </p>
+              <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                {FULL_DAYS.map((label, idx) => {
+                  const on = selectedDays.includes(idx);
+                  const full = selectedDays.length >= daysPerWeek && !on;
+                  return (
+                    <button key={idx} onClick={() => toggleDay(idx)} style={{
+                      height:44, minWidth:44, padding:"0 12px", borderRadius:12,
+                      fontSize:13, fontWeight:700, cursor: full ? "not-allowed" : "pointer",
+                      background: on ? "var(--color-forest-canopy)" : "transparent",
+                      border:`1.5px solid ${on ? "var(--color-forest-canopy)" : "var(--color-stone)"}`,
+                      color: on ? "var(--color-ink)" : full ? "var(--color-stone)" : "var(--color-muted-ash)",
+                      opacity: full ? 0.4 : 1, transition:".15s",
+                    }}>
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div style={{ paddingTop:32 }}>
+              <button
+                onClick={() => canContinue && setOnboardStep(10)}
+                disabled={!canContinue}
+                style={{
+                  width:"100%", height:54, background:"var(--color-forest-canopy)",
+                  border:"none", borderRadius:16, fontSize:17, fontWeight:700,
+                  color:"var(--color-ink)", cursor: canContinue ? "pointer" : "not-allowed",
+                  opacity: canContinue ? 1 : 0.45, marginBottom:12,
+                }}>
+                Continue
+              </button>
+              <input ref={importFileRef} type="file" accept=".json"
+                style={{ display:"none" }} onChange={handleImport} />
+              <button onClick={() => importFileRef.current?.click()} style={{
+                background:"none", border:"none", color:"var(--color-muted-ash)",
+                fontSize:14, fontWeight:500, cursor:"pointer", width:"100%",
+              }}>
+                Import Workout File
               </button>
             </div>
           </div>
@@ -1286,7 +1628,68 @@ export default function Page() {
     );
   }
 
+  /* ─── SHARED UI ────────────────────────────────────────── */
+  const activeTab: "home"|"routines"|"profile" =
+    screen === "profile" ? "profile" : screen === "routines" ? "routines" : "home";
+
+  const BottomNav = (
+    <nav style={{
+      display:"flex", alignItems:"stretch",
+      borderTop:"1px solid var(--color-stone)",
+      background:"var(--color-parchment)",
+      padding:"6px 8px calc(6px + env(safe-area-inset-bottom, 0px))",
+      gap:4,
+    }}>
+      {([
+        { id:"home",     label:"Home",    path:"M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" },
+        { id:"routines", label:"Workout", path:"M20.57 14.86L22 13.43 20.57 12 17 15.57 8.43 7 12 3.43 10.57 2 9.14 3.43l-1.43-1.43-1.43 1.43 1.43 1.43L4 8.57 5.43 10l-1.43 1.43 1.43 1.43L9 9.29l8.57 8.57-3.57 3.57 1.43 1.43 1.43-1.43 1.43 1.43 1.43-1.43-1.43-1.43z" },
+        { id:"profile",  label:"Profile", path:"M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z" },
+      ] as const).map(tab => {
+        const isActive = activeTab === tab.id;
+        return (
+          <button key={tab.id} onClick={() => setScreen(tab.id as Screen)} style={{
+            flex:1, display:"flex", flexDirection:"column", alignItems:"center",
+            gap:3, background:"none", border:"none", cursor:"pointer", padding:"6px 0",
+            borderRadius:14,
+          }}>
+            <div style={{
+              width:36, height:36, borderRadius:11, display:"grid", placeItems:"center",
+              background: isActive ? "var(--color-forest-canopy)" : "transparent",
+              transition:".15s",
+            }}>
+              <svg width="20" height="20" viewBox="0 0 24 24"
+                fill={isActive ? "var(--color-ink)" : "var(--color-muted-ash)"}>
+                <path d={tab.path}/>
+              </svg>
+            </div>
+            <span style={{
+              fontSize:10, fontWeight:700, letterSpacing:".04em", textTransform:"uppercase",
+              color: isActive ? "var(--color-ink)" : "var(--color-muted-ash)",
+            }}>{tab.label}</span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+
+  const CHART_DATA = [0, 45, 0, 30, 0, 60, 0]; // Mon–Sun placeholder minutes
+  const CHART_MAX  = Math.max(...CHART_DATA, 1);
+  const RECENT = [
+    { name: "Shoulder & Squat Day", date: "Today", sets: 9  },
+    { name: "Legs & Core Day",      date: "Wed",   sets: 10 },
+    { name: "Push & Legs Day",      date: "Mon",   sets: 9  },
+  ];
+
   /* ─── HOME ─────────────────────────────────────────────── */
+  const sortedSelectedDays = [...selectedDays].sort((a, b) => a - b);
+  const getWorkoutForDay = (dayIdx: number) => {
+    const pos = sortedSelectedDays.indexOf(dayIdx);
+    return pos >= 0 ? WORKOUTS[pos % WORKOUTS.length] : null;
+  };
+  const todayWorkout     = getWorkoutForDay(todayIdx);
+  const selectedWorkout  = getWorkoutForDay(calSelectedDay);
+  const isSelectedToday  = calSelectedDay === todayIdx;
+
   if (screen === "home") return (
     <div className="app">
       <div className="mobile-frame">
@@ -1294,67 +1697,287 @@ export default function Page() {
           <span>{String(today.getHours()).padStart(2,"0")}:{String(today.getMinutes()).padStart(2,"0")}</span>
           <div className="icons"><span className="dot"/><span className="dot"/><span className="pill"/></div>
         </div>
-        <main>
+        <main style={{ paddingBottom:24 }}>
+
+          {/* Stat banner */}
+          <div style={{
+            background:"var(--color-forest-canopy)", borderRadius:20,
+            padding:"13px 18px", marginBottom:20,
+            display:"flex", justifyContent:"space-between", alignItems:"center",
+          }}>
+            <div>
+              <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase",
+                letterSpacing:".1em", color:"rgba(26,26,26,.55)", marginBottom:2 }}>
+                Total
+              </div>
+              <div style={{ fontSize:18, fontWeight:800, color:"var(--color-ink)", lineHeight:1 }}>
+                Workout {workoutCount || 1}
+              </div>
+            </div>
+            <div style={{ width:1, height:32, background:"rgba(26,26,26,.12)" }}/>
+            <div style={{ textAlign:"right" }}>
+              <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase",
+                letterSpacing:".1em", color:"rgba(26,26,26,.55)", marginBottom:2 }}>
+                Streak
+              </div>
+              <div style={{ fontSize:18, fontWeight:800, color:"var(--color-ink)", lineHeight:1 }}>
+                Week {streak || 1}
+              </div>
+            </div>
+          </div>
+
           {/* Week date strip */}
-          <div style={{ display:"flex", gap:6, marginBottom:28 }}>
+          <div style={{ display:"flex", gap:6, marginBottom:24 }}>
             {week.map((d, i) => {
-              const isToday = i === todayIdx;
+              const dayOfWeek    = d.getDay();
+              const isToday      = dayOfWeek === todayIdx;
+              const isSelected   = dayOfWeek === calSelectedDay;
+              const isWorkoutDay = sortedSelectedDays.includes(dayOfWeek);
               return (
-                <div key={i} style={{
+                <button key={i} onClick={() => setCalSelectedDay(dayOfWeek)} style={{
                   flex:1, display:"flex", flexDirection:"column", alignItems:"center",
-                  gap:5, padding:"10px 0", borderRadius:18,
-                  background: isToday ? "var(--color-forest-canopy)" : "transparent",
-                  border:`1px solid ${isToday ? "var(--color-forest-canopy)" : "var(--color-stone)"}`,
+                  gap:4, padding:"10px 0", borderRadius:18,
+                  background: isSelected ? "var(--color-forest-canopy)" : "transparent",
+                  border:`1px solid ${isSelected ? "var(--color-forest-canopy)" : "var(--color-stone)"}`,
+                  opacity: !isWorkoutDay && !isToday && !isSelected ? 0.3 : 1,
+                  cursor: isWorkoutDay || isToday ? "pointer" : "default",
+                  transition:".15s",
                 }}>
                   <span style={{ fontSize:9, fontWeight:700, letterSpacing:".08em",
                     textTransform:"uppercase",
-                    color: isToday ? "rgba(26,26,26,.6)" : "var(--color-muted-ash)" }}>
-                    {DAYS[d.getDay()]}
+                    color: isSelected ? "rgba(26,26,26,.6)" : "var(--color-muted-ash)" }}>
+                    {DAYS[dayOfWeek]}
                   </span>
-                  <span style={{ fontSize:20, fontWeight:700, lineHeight:1,
-                    color:"var(--color-ink)" }}>
+                  <span style={{ fontSize:20, fontWeight:700, lineHeight:1, color:"var(--color-ink)" }}>
                     {d.getDate()}
                   </span>
-                </div>
+                  {isWorkoutDay && !isSelected && (
+                    <div style={{ width:5, height:5, borderRadius:"50%",
+                      background:"var(--color-forest-canopy)", marginTop:1 }}/>
+                  )}
+                </button>
               );
             })}
           </div>
 
           {/* Greeting */}
-          <div style={{ marginBottom:24 }}>
-            <p style={{ fontSize:13, color:"var(--color-muted-ash)", marginBottom:6 }}>
+          <div style={{ marginBottom:20 }}>
+            <p style={{ fontSize:13, color:"var(--color-muted-ash)", marginBottom:4 }}>
               {DAYS[todayIdx]}, {MONTHS[today.getMonth()]} {today.getDate()}
             </p>
-            <h1 style={{ fontSize:38, fontWeight:800, letterSpacing:"-.02em",
+            <h1 style={{ fontSize:34, fontWeight:800, letterSpacing:"-.02em",
               lineHeight:1.05, color:"var(--color-ink)" }}>
-              Hi Harshita
+              Hi {userName || "there"}
             </h1>
           </div>
 
-          {/* Workout card */}
-          <div className="card pad">
-            <div className="eyebrow">Today&apos;s Workout</div>
-            <h3 style={{ marginBottom:16 }}>{WORKOUT.name}</h3>
-            {WORKOUT.exercises.map((e, i) => (
-              <div key={i} className="row" style={{ alignItems:"center" }}>
-                <div>
-                  <div style={{ fontWeight:600, fontSize:14, color:"var(--color-ink)" }}>{e.name}</div>
-                  <div style={{ fontSize:12, color:"var(--color-muted-ash)", marginTop:2 }}>
-                    {e.sets} sets · {e.reps} reps
-                  </div>
+          {/* Workout card — driven by selected calendar day */}
+          {selectedWorkout ? (
+            <>
+              <div className="card pad">
+                <div className="eyebrow">
+                  {isSelectedToday ? "Today's Workout" : `${DAYS[calSelectedDay]}'s Workout`}
                 </div>
-                <span className="badge">{e.sets}×{e.reps}</span>
+                <h3 style={{ marginBottom:16 }}>{selectedWorkout.name}</h3>
+                {selectedWorkout.exercises.map((e, i) => (
+                  <div key={i} className="row" style={{ alignItems:"center" }}>
+                    <div>
+                      <div style={{ fontWeight:600, fontSize:14, color:"var(--color-ink)" }}>{e.name}</div>
+                      <div style={{ fontSize:12, color:"var(--color-muted-ash)", marginTop:2 }}>
+                        {e.sets} sets · {e.reps} reps
+                      </div>
+                    </div>
+                    <span className="badge">{e.sets}×{e.reps}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="sticky-cta" style={{ marginTop:12 }}>
+                <button className="btn dark" style={{ width:"100%", fontSize:16 }}
+                  onClick={() => startRoutine(selectedWorkout, "home")}>
+                  Start Workout
+                </button>
+                <input ref={importFileRef} type="file" accept=".json"
+                  style={{ display:"none" }} onChange={handleImport}/>
+                <button onClick={() => importFileRef.current?.click()} style={{
+                  background:"none", border:"none", width:"100%", marginTop:8,
+                  fontSize:13, fontWeight:600, color:"var(--color-muted-ash)", cursor:"pointer",
+                }}>
+                  Import Workout
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="card pad">
+                <div className="eyebrow">
+                  {isSelectedToday ? "Today" : DAYS[calSelectedDay]}
+                </div>
+                <h3 style={{ marginBottom:8 }}>Rest Day</h3>
+                <p style={{ fontSize:14, color:"var(--color-muted-ash)", margin:0, lineHeight:1.6 }}>
+                  Recovery is part of the plan. Stay hydrated, sleep well, and come back stronger.
+                </p>
+              </div>
+              <div style={{ marginTop:12, textAlign:"center" }}>
+                <input ref={importFileRef} type="file" accept=".json"
+                  style={{ display:"none" }} onChange={handleImport}/>
+                <button onClick={() => importFileRef.current?.click()} style={{
+                  background:"none", border:"none",
+                  fontSize:13, fontWeight:600, color:"var(--color-muted-ash)", cursor:"pointer",
+                }}>
+                  Import Workout
+                </button>
+              </div>
+            </>
+          )}
+        </main>
+        {BottomNav}
+      </div>
+    </div>
+  );
+
+  /* ─── ROUTINES ─────────────────────────────────────────── */
+  if (screen === "routines") return (
+    <div className="app">
+      <div className="mobile-frame" style={{ display:"flex", flexDirection:"column" }}>
+        <div className="statusbar">
+          <span>{String(today.getHours()).padStart(2,"0")}:{String(today.getMinutes()).padStart(2,"0")}</span>
+          <div className="icons"><span className="dot"/><span className="dot"/><span className="pill"/></div>
+        </div>
+        <main style={{ flex:1, overflowY:"auto", paddingBottom:16 }}>
+          <h2 style={{ fontSize:28, fontWeight:800, color:"var(--color-ink)", marginBottom:4 }}>Routines</h2>
+          <p style={{ fontSize:13, color:"var(--color-muted-ash)", marginBottom:20 }}>Pick a workout and start tracking</p>
+
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            {WORKOUTS.map((w, i) => {
+              const totalSets = w.exercises.reduce((s, e) => s + e.sets, 0);
+              const estMin    = Math.round(totalSets * 2.5);
+              return (
+                <div key={w.name} className="card pad" style={{ borderRadius:20 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
+                    <div>
+                      <div style={{ fontSize:11, fontWeight:700, textTransform:"uppercase",
+                        letterSpacing:".08em", color:"var(--color-muted-ash)", marginBottom:3 }}>
+                        Day {i + 1}
+                      </div>
+                      <div style={{ fontSize:18, fontWeight:800, color:"var(--color-ink)" }}>{w.name}</div>
+                    </div>
+                    <div style={{ fontSize:11, fontWeight:600, color:"var(--color-muted-ash)",
+                      background:"var(--color-stone)", borderRadius:20, padding:"4px 10px" }}>
+                      ~{estMin} min
+                    </div>
+                  </div>
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:14 }}>
+                    {w.exercises.map(ex => (
+                      <span key={ex.name} style={{ fontSize:11, fontWeight:600,
+                        background:"rgba(209,244,125,.25)", color:"var(--color-ink)",
+                        borderRadius:20, padding:"3px 10px", border:"1px solid rgba(209,244,125,.5)" }}>
+                        {ex.name} · {ex.sets}×{ex.reps}
+                      </span>
+                    ))}
+                  </div>
+                  <button className="btn dark" style={{ width:"100%", fontSize:14, height:42 }}
+                    onClick={() => startRoutine(w, "routines")}>
+                    Start Routine
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </main>
+        {BottomNav}
+      </div>
+    </div>
+  );
+
+  /* ─── PROFILE ───────────────────────────────────────────── */
+  if (screen === "profile") return (
+    <div className="app">
+      <div className="mobile-frame" style={{ display:"flex", flexDirection:"column" }}>
+        <div className="statusbar">
+          <span>{String(today.getHours()).padStart(2,"0")}:{String(today.getMinutes()).padStart(2,"0")}</span>
+          <div className="icons"><span className="dot"/><span className="dot"/><span className="pill"/></div>
+        </div>
+        <main style={{ flex:1, overflowY:"auto", paddingBottom:16 }}>
+          {/* Avatar + name */}
+          <div style={{ display:"flex", flexDirection:"column", alignItems:"center", marginBottom:24 }}>
+            <div style={{ width:72, height:72, borderRadius:"50%",
+              background:"var(--color-forest-canopy)",
+              display:"grid", placeItems:"center",
+              fontSize:28, fontWeight:800, color:"var(--color-ink)", marginBottom:10 }}>
+              {(userName || "U")[0].toUpperCase()}
+            </div>
+            <div style={{ fontSize:22, fontWeight:800, color:"var(--color-ink)" }}>{userName || "Athlete"}</div>
+            <div style={{ fontSize:12, color:"var(--color-muted-ash)", marginTop:2 }}>Training with Upform</div>
+          </div>
+
+          {/* Stats banner */}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:20 }}>
+            {[
+              { label:"Total Workouts", value: workoutCount || 1 },
+              { label:"Week Streak",    value: streak || 1 },
+            ].map(s => (
+              <div key={s.label} className="card pad" style={{ borderRadius:16, textAlign:"center" }}>
+                <div style={{ fontSize:26, fontWeight:800, color:"var(--color-ink)" }}>{s.value}</div>
+                <div style={{ fontSize:11, color:"var(--color-muted-ash)", marginTop:2 }}>{s.label}</div>
               </div>
             ))}
           </div>
 
-          <div className="sticky-cta" style={{ marginTop:16 }}>
-            <button className="btn dark" style={{ width:"100%", fontSize:16 }}
-              onClick={() => setScreen("workout")}>
-              Start Workout
-            </button>
+          {/* Weekly activity bar chart */}
+          <div className="card pad" style={{ borderRadius:20, marginBottom:16 }}>
+            <div style={{ fontSize:12, fontWeight:700, textTransform:"uppercase",
+              letterSpacing:".08em", color:"var(--color-muted-ash)", marginBottom:12 }}>
+              This Week
+            </div>
+            <div style={{ display:"flex", gap:6, alignItems:"flex-end", height:56 }}>
+              {["M","T","W","T","F","S","S"].map((d, i) => {
+                const heights = [45, 0, 38, 0, 52, 0, 0];
+                const h = heights[i];
+                const isToday = i === (today.getDay() + 6) % 7;
+                return (
+                  <div key={i} style={{ flex:1, display:"flex", flexDirection:"column",
+                    alignItems:"center", gap:4 }}>
+                    <div style={{ width:"100%", height:56, display:"flex", alignItems:"flex-end" }}>
+                      <div style={{ width:"100%", height: h ? `${h}%` : 4, borderRadius:4,
+                        background: h > 0
+                          ? isToday ? "var(--color-forest-canopy)" : "rgba(209,244,125,.45)"
+                          : "var(--color-stone)",
+                        transition:".2s" }}/>
+                    </div>
+                    <span style={{ fontSize:9, fontWeight:700,
+                      color: isToday ? "var(--color-ink)" : "var(--color-muted-ash)" }}>{d}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Recent workouts */}
+          <div style={{ fontSize:12, fontWeight:700, textTransform:"uppercase",
+            letterSpacing:".08em", color:"var(--color-muted-ash)", marginBottom:10 }}>
+            Recent Workouts
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {[
+              { name:"Shoulder & Squat Day", date:"Today",      sets:9,  reps:108 },
+              { name:"Legs & Core Day",     date:"3 days ago", sets:10, reps:100 },
+              { name:"Push & Legs Day",     date:"5 days ago", sets:10, reps:110 },
+            ].map(r => (
+              <div key={r.name + r.date} className="card pad"
+                style={{ borderRadius:16, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <div>
+                  <div style={{ fontSize:14, fontWeight:700, color:"var(--color-ink)" }}>{r.name}</div>
+                  <div style={{ fontSize:11, color:"var(--color-muted-ash)", marginTop:1 }}>{r.date}</div>
+                </div>
+                <div style={{ textAlign:"right" }}>
+                  <div style={{ fontSize:12, fontWeight:700, color:"var(--color-ink)" }}>{r.sets} sets</div>
+                  <div style={{ fontSize:11, color:"var(--color-muted-ash)" }}>{r.reps} reps</div>
+                </div>
+              </div>
+            ))}
           </div>
         </main>
+        {BottomNav}
       </div>
     </div>
   );
@@ -1369,7 +1992,7 @@ export default function Page() {
         </div>
         <main>
           {/* Back */}
-          <button onClick={() => setScreen("home")} style={{
+          <button onClick={() => setScreen(prevScreenRef.current)} style={{
             background:"none", border:"none", cursor:"pointer", padding:0,
             display:"flex", alignItems:"center", gap:6, color:"var(--color-muted-ash)",
             fontSize:13, fontWeight:600, marginBottom:18,
@@ -1378,6 +2001,66 @@ export default function Page() {
           {/* Form animation */}
           <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:4, marginBottom:20 }}>
             <span className="eyebrow" style={{ marginBottom:2 }}>Correct Form</span>
+
+            {/* ── SQUAT DIAGRAM ── shown for squat-first workouts */}
+            {activeWorkoutRef.current.exercises[0]?.type !== "press" ? (
+              <svg viewBox="0 0 180 220" width="150" height="182" fill="none" xmlns="http://www.w3.org/2000/svg">
+                {/* Depth guide line at hip-parallel */}
+                <line x1="12" y1="110" x2="168" y2="110"
+                  stroke="rgba(209,244,125,.45)" strokeWidth="1" strokeDasharray="5,4"/>
+
+                {/* Ground */}
+                <line x1="28" y1="208" x2="152" y2="208"
+                  stroke="var(--color-stone)" strokeWidth="2" strokeLinecap="round"/>
+
+                {/* Left foot */}
+                <line x1="54" y1="208" x2="34" y2="208" stroke="rgba(26,26,26,.5)" strokeWidth="3" strokeLinecap="round"/>
+                {/* Right foot */}
+                <line x1="126" y1="208" x2="146" y2="208" stroke="rgba(26,26,26,.5)" strokeWidth="3" strokeLinecap="round"/>
+                {/* Left shin */}
+                <line x1="54" y1="208" x2="50" y2="160" stroke="rgba(26,26,26,.7)" strokeWidth="3.5" strokeLinecap="round"/>
+                {/* Right shin */}
+                <line x1="126" y1="208" x2="130" y2="160" stroke="rgba(26,26,26,.7)" strokeWidth="3.5" strokeLinecap="round"/>
+
+                {/* Animated upper body (squats up and down) */}
+                <g>
+                  <animateTransform attributeName="transform" type="translate"
+                    values="0,0; 0,22; 0,0" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+
+                  {/* Knee joints */}
+                  <circle cx="50" cy="160" r="5.5" fill="rgba(209,244,125,.75)"/>
+                  <circle cx="130" cy="160" r="5.5" fill="rgba(209,244,125,.75)"/>
+
+                  {/* Left thigh */}
+                  <line x1="50" y1="160" x2="68" y2="110" stroke="rgba(26,26,26,.75)" strokeWidth="3.5" strokeLinecap="round"/>
+                  {/* Right thigh */}
+                  <line x1="130" y1="160" x2="112" y2="110" stroke="rgba(26,26,26,.75)" strokeWidth="3.5" strokeLinecap="round"/>
+
+                  {/* Quad glow */}
+                  <ellipse cx="59" cy="135" rx="12" ry="22" fill="rgba(209,244,125,.18)" transform="rotate(-12 59 135)"/>
+                  <ellipse cx="121" cy="135" rx="12" ry="22" fill="rgba(209,244,125,.18)" transform="rotate(12 121 135)"/>
+
+                  {/* Hips */}
+                  <line x1="68" y1="110" x2="112" y2="110" stroke="rgba(26,26,26,.65)" strokeWidth="3" strokeLinecap="round"/>
+
+                  {/* Torso */}
+                  <line x1="90" y1="110" x2="90" y2="54" stroke="rgba(26,26,26,.85)" strokeWidth="4" strokeLinecap="round"/>
+
+                  {/* Shoulders */}
+                  <line x1="64" y1="62" x2="116" y2="62" stroke="rgba(26,26,26,.8)" strokeWidth="3.5" strokeLinecap="round"/>
+
+                  {/* Arms forward (raised for balance) */}
+                  <line x1="64" y1="62" x2="36" y2="74" stroke="rgba(26,26,26,.7)" strokeWidth="3" strokeLinecap="round"/>
+                  <line x1="116" y1="62" x2="144" y2="74" stroke="rgba(26,26,26,.7)" strokeWidth="3" strokeLinecap="round"/>
+
+                  {/* Neck */}
+                  <line x1="90" y1="41" x2="90" y2="54" stroke="rgba(26,26,26,.8)" strokeWidth="3" strokeLinecap="round"/>
+                  {/* Head */}
+                  <circle cx="90" cy="28" r="13" stroke="rgba(26,26,26,.8)" strokeWidth="2" fill="rgba(26,26,26,.06)"/>
+                </g>
+              </svg>
+            ) : (
             <svg viewBox="0 0 180 220" width="150" height="182" fill="none" xmlns="http://www.w3.org/2000/svg">
               {/* Bench */}
               <rect x="36" y="132" width="108" height="7" rx="3.5"
@@ -1472,18 +2155,22 @@ export default function Page() {
                 <rect x="9"  y="-7"  width="7"  height="14" rx="2" fill="rgba(26,26,26,.45)"/>
               </g>
             </svg>
+            )}
           </div>
 
           {/* Header */}
           <div style={{ marginBottom:16 }}>
             <p className="eyebrow" style={{ marginBottom:4 }}>Ready to train</p>
             <h2 style={{ fontSize:32,
-              fontWeight:400, color:"var(--color-ink)", lineHeight:1 }}>Shoulder Day</h2>
+              fontWeight:400, color:"var(--color-ink)", lineHeight:1 }}>{activeWorkoutRef.current.name}</h2>
           </div>
 
           {/* Stats */}
           <div className="metric-row" style={{ marginBottom:20 }}>
-            {[{ label:"Est. Time", value:"~25 min" },{ label:"Sets & Reps", value:"3 × 12" }].map(s => (
+            {[
+              { label:"Est. Time", value:`~${Math.round(activeWorkoutRef.current.exercises.reduce((s,e)=>s+e.sets,0)*2.5)} min` },
+              { label:"Exercises", value:`${activeWorkoutRef.current.exercises.length}` },
+            ].map(s => (
               <div key={s.label} className="metric">
                 <strong>{s.value}</strong>
                 <span>{s.label}</span>
@@ -1525,6 +2212,7 @@ export default function Page() {
             </button>
           </div>
         </main>
+        {BottomNav}
       </div>
     </div>
   );
@@ -1762,6 +2450,94 @@ export default function Page() {
               </div>
             )}
 
+            {/* ── LEG PRESS INTRO OVERLAY ── */}
+            {legPressIntro && (
+              <div style={{
+                position:"absolute", inset:0, zIndex:45,
+                display:"flex", flexDirection:"column",
+                alignItems:"center", justifyContent:"center",
+                background:"rgba(5,6,5,.92)",
+                backdropFilter:"blur(10px)", WebkitBackdropFilter:"blur(10px)",
+                padding:"0 28px",
+                animation:"fadein .4s ease",
+              }}>
+                {/* Muscle target */}
+                <span style={{
+                  fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:".16em",
+                  color:"rgba(255,255,255,.5)", background:"rgba(255,255,255,.08)",
+                  padding:"4px 14px", borderRadius:8, marginBottom:16,
+                  border:"1px solid rgba(255,255,255,.12)",
+                }}>Target Muscle</span>
+
+                {/* Body silhouette with quad highlight */}
+                <svg viewBox="0 0 120 200" width="100" height="166" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginBottom:8 }}>
+                  {/* Head */}
+                  <circle cx="60" cy="16" r="12" stroke="rgba(255,255,255,.4)" strokeWidth="1.5" fill="rgba(255,255,255,.05)"/>
+                  {/* Neck */}
+                  <line x1="60" y1="28" x2="60" y2="38" stroke="rgba(255,255,255,.35)" strokeWidth="2" strokeLinecap="round"/>
+                  {/* Torso */}
+                  <line x1="60" y1="38" x2="60" y2="95" stroke="rgba(255,255,255,.35)" strokeWidth="3.5" strokeLinecap="round"/>
+                  {/* Shoulders */}
+                  <line x1="32" y1="46" x2="88" y2="46" stroke="rgba(255,255,255,.35)" strokeWidth="2.5" strokeLinecap="round"/>
+                  {/* Arms */}
+                  <line x1="32" y1="46" x2="22" y2="80" stroke="rgba(255,255,255,.25)" strokeWidth="2" strokeLinecap="round"/>
+                  <line x1="88" y1="46" x2="98" y2="80" stroke="rgba(255,255,255,.25)" strokeWidth="2" strokeLinecap="round"/>
+                  {/* Hips */}
+                  <line x1="40" y1="95" x2="80" y2="95" stroke="rgba(255,255,255,.3)" strokeWidth="2.5" strokeLinecap="round"/>
+                  {/* QUAD HIGHLIGHT — left */}
+                  <rect x="28" y="95" width="18" height="52" rx="9" fill="rgba(209,244,125,.65)"/>
+                  {/* QUAD HIGHLIGHT — right */}
+                  <rect x="74" y="95" width="18" height="52" rx="9" fill="rgba(209,244,125,.65)"/>
+                  {/* Shins */}
+                  <line x1="37" y1="147" x2="32" y2="192" stroke="rgba(255,255,255,.25)" strokeWidth="2" strokeLinecap="round"/>
+                  <line x1="83" y1="147" x2="88" y2="192" stroke="rgba(255,255,255,.25)" strokeWidth="2" strokeLinecap="round"/>
+                </svg>
+
+                <p style={{ fontSize:17, fontWeight:700, color:"white", margin:"0 0 4px" }}>Quadriceps</p>
+                <p style={{ fontSize:12, color:"rgba(255,255,255,.45)", margin:"0 0 22px" }}>Front of thigh</p>
+
+                {/* Foot placement diagram */}
+                <div style={{ background:"rgba(255,255,255,.06)", border:"1px solid rgba(255,255,255,.12)",
+                  borderRadius:16, padding:"14px 20px", marginBottom:20, width:"100%" }}>
+                  <p style={{ fontSize:10, fontWeight:700, textTransform:"uppercase",
+                    letterSpacing:".1em", color:"rgba(255,255,255,.4)", margin:"0 0 10px", textAlign:"center" }}>
+                    Foot Placement
+                  </p>
+                  <svg viewBox="0 0 200 90" width="100%" height="70" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    {/* Platform */}
+                    <rect x="10" y="60" width="180" height="16" rx="4" fill="rgba(255,255,255,.12)" stroke="rgba(255,255,255,.2)" strokeWidth="1"/>
+                    {/* Left foot */}
+                    <rect x="52" y="38" width="28" height="22" rx="5"
+                      fill="rgba(209,244,125,.35)" stroke="rgba(209,244,125,.7)" strokeWidth="1.5"
+                      transform="rotate(-8 66 49)"/>
+                    {/* Right foot */}
+                    <rect x="120" y="38" width="28" height="22" rx="5"
+                      fill="rgba(209,244,125,.35)" stroke="rgba(209,244,125,.7)" strokeWidth="1.5"
+                      transform="rotate(8 134 49)"/>
+                    {/* Hip-width indicator */}
+                    <line x1="66" y1="28" x2="134" y2="28" stroke="rgba(255,255,255,.3)" strokeWidth="1" strokeDasharray="3,3"/>
+                    <line x1="66" y1="24" x2="66" y2="32" stroke="rgba(255,255,255,.3)" strokeWidth="1"/>
+                    <line x1="134" y1="24" x2="134" y2="32" stroke="rgba(255,255,255,.3)" strokeWidth="1"/>
+                    <text x="100" y="22" textAnchor="middle" fontSize="7" fill="rgba(255,255,255,.45)" fontFamily="sans-serif">hip-width</text>
+                  </svg>
+                  <p style={{ fontSize:11, color:"rgba(255,255,255,.45)", margin:"6px 0 0", textAlign:"center", lineHeight:1.5 }}>
+                    Mid-platform · toes slightly out
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => setLegPressIntro(false)}
+                  style={{
+                    width:"100%", height:50, borderRadius:14,
+                    background:"var(--color-forest-canopy)",
+                    border:"none", fontWeight:700, fontSize:15,
+                    color:"var(--color-ink)", cursor:"pointer",
+                  }}>
+                  Got it, Start
+                </button>
+              </div>
+            )}
+
             {/* Step-into-frame nudge */}
             {noBody && (
               <div style={{ position:"absolute", inset:0, display:"grid",
@@ -1827,38 +2603,85 @@ export default function Page() {
               </div>
             </div>
 
-            {/* Rep counter + dots */}
+            {/* Rep counter — auto for pose exercises, manual for leg press */}
             <div style={{ position:"absolute", inset:0, display:"flex", flexDirection:"column",
-              alignItems:"center", justifyContent:"center", gap:18, pointerEvents:"none" }}>
+              alignItems:"center", justifyContent:"center", gap:18,
+              pointerEvents: ex.type === "legpress" ? "auto" : "none" }}>
 
-              <div style={{
-                background:"rgba(0,0,0,.35)", backdropFilter:"blur(24px)",
-                WebkitBackdropFilter:"blur(24px)",
-                border: repFlash === "bad"
-                  ? "1.5px solid rgba(255,80,80,.65)"
-                  : repFlash === "good"
-                    ? "1.5px solid rgba(80,220,130,.65)"
-                    : "1px solid rgba(255,255,255,.15)",
-                borderRadius:24, padding:"16px 52px",
-                display:"flex", flexDirection:"column", alignItems:"center", gap:8,
-                transition:"border-color .25s",
-              }}>
-                <span style={{
-                  fontSize:108, fontWeight:400, lineHeight:1,
-                  color: repFlash === "bad" ? "#ff5050" : repFlash === "good" ? "#50dc80" : "white",
-                  textShadow:"0 4px 32px rgba(0,0,0,.5)",
-                  animation: repFlash === "good" ? "repgood .5s ease"
-                    : repFlash === "bad" ? "repbad .4s ease" : "none",
-                  transition:"color .25s",
+              {ex.type === "legpress" && !legPressIntro ? (
+                /* ── MANUAL LEG PRESS COUNTER ── */
+                <div style={{
+                  background:"rgba(0,0,0,.55)", backdropFilter:"blur(24px)",
+                  WebkitBackdropFilter:"blur(24px)",
+                  border:"1px solid rgba(255,255,255,.15)",
+                  borderRadius:28, padding:"20px 40px",
+                  display:"flex", flexDirection:"column", alignItems:"center", gap:12,
                 }}>
-                  {reps}
-                </span>
-                <span style={{ fontSize:11, fontWeight:700, textTransform:"uppercase",
-                  letterSpacing:".14em",
-                  color: reps >= ex.reps ? "rgba(80,220,130,.95)" : "rgba(255,255,255,.4)" }}>
-                  {reps >= ex.reps ? "✓  Set Complete" : `of ${ex.reps} reps`}
-                </span>
-              </div>
+                  <span style={{ fontSize:11, fontWeight:700, textTransform:"uppercase",
+                    letterSpacing:".14em", color:"rgba(255,255,255,.4)" }}>
+                    Leg Press · Tap to count
+                  </span>
+                  <span style={{
+                    fontSize:108, fontWeight:400, lineHeight:1, color:"white",
+                    textShadow:"0 4px 32px rgba(0,0,0,.5)",
+                  }}>
+                    {reps}
+                  </span>
+                  <span style={{ fontSize:11, fontWeight:700, textTransform:"uppercase",
+                    letterSpacing:".14em",
+                    color: reps >= ex.reps ? "rgba(80,220,130,.95)" : "rgba(255,255,255,.4)" }}>
+                    {reps >= ex.reps ? "✓  Set Complete" : `of ${ex.reps} reps`}
+                  </span>
+                  <div style={{ display:"flex", gap:14, marginTop:4 }}>
+                    <button
+                      onClick={() => setReps(r => Math.max(0, r - 1))}
+                      style={{
+                        width:56, height:56, borderRadius:"50%",
+                        background:"rgba(255,255,255,.12)", border:"1px solid rgba(255,255,255,.2)",
+                        color:"white", fontSize:26, fontWeight:300, cursor:"pointer",
+                        display:"grid", placeItems:"center", lineHeight:1,
+                      }}>−</button>
+                    <button
+                      onClick={() => setReps(r => r + 1)}
+                      style={{
+                        width:56, height:56, borderRadius:"50%",
+                        background:"rgba(209,244,125,.9)", border:"none",
+                        color:"#1a1a1a", fontSize:26, fontWeight:700, cursor:"pointer",
+                        display:"grid", placeItems:"center", lineHeight:1,
+                      }}>+</button>
+                  </div>
+                </div>
+              ) : ex.type !== "legpress" ? (
+                /* ── AUTO POSE COUNTER ── */
+                <div style={{
+                  background:"rgba(0,0,0,.35)", backdropFilter:"blur(24px)",
+                  WebkitBackdropFilter:"blur(24px)",
+                  border: repFlash === "bad"
+                    ? "1.5px solid rgba(255,80,80,.65)"
+                    : repFlash === "good"
+                      ? "1.5px solid rgba(80,220,130,.65)"
+                      : "1px solid rgba(255,255,255,.15)",
+                  borderRadius:24, padding:"16px 52px",
+                  display:"flex", flexDirection:"column", alignItems:"center", gap:8,
+                  transition:"border-color .25s",
+                }}>
+                  <span style={{
+                    fontSize:108, fontWeight:400, lineHeight:1,
+                    color: repFlash === "bad" ? "#ff5050" : repFlash === "good" ? "#50dc80" : "white",
+                    textShadow:"0 4px 32px rgba(0,0,0,.5)",
+                    animation: repFlash === "good" ? "repgood .5s ease"
+                      : repFlash === "bad" ? "repbad .4s ease" : "none",
+                    transition:"color .25s",
+                  }}>
+                    {reps}
+                  </span>
+                  <span style={{ fontSize:11, fontWeight:700, textTransform:"uppercase",
+                    letterSpacing:".14em",
+                    color: reps >= ex.reps ? "rgba(80,220,130,.95)" : "rgba(255,255,255,.4)" }}>
+                    {reps >= ex.reps ? "✓  Set Complete" : `of ${ex.reps} reps`}
+                  </span>
+                </div>
+              ) : null}
 
             </div>
 
@@ -1908,69 +2731,82 @@ export default function Page() {
 
             {/* ── REST OVERLAY ── */}
             {restActive && (() => {
-              const r = 80;
+              const r = 72;
               const circ = 2 * Math.PI * r;
               const offset = circ * (1 - restSeconds / 60);
               const nextLabel = currentSet < ex.sets
                 ? `Set ${currentSet + 1} of ${ex.sets}`
-                : exIdx < WORKOUT.exercises.length - 1
-                  ? `Next: ${WORKOUT.exercises[exIdx + 1].name}`
+                : exIdx < activeWorkoutRef.current.exercises.length - 1
+                  ? `Next: ${activeWorkoutRef.current.exercises[exIdx + 1].name}`
                   : "Last set done!";
+              const statLine = lastSetStats
+                ? lastSetStats.bad === 0
+                  ? `${lastSetStats.good} / ${lastSetStats.target} · clean set`
+                  : `${lastSetStats.good} / ${lastSetStats.target} · ${lastSetStats.bad} redo${lastSetStats.bad > 1 ? "s" : ""}`
+                : null;
               return (
                 <div style={{
                   position:"absolute", inset:0, zIndex:40,
                   display:"flex", flexDirection:"column",
-                  alignItems:"center", justifyContent:"center", gap:0,
-                  background:"rgba(5,6,5,.82)",
-                  backdropFilter:"blur(8px)", WebkitBackdropFilter:"blur(8px)",
+                  alignItems:"center", justifyContent:"center",
+                  background:"rgba(5,6,5,.86)",
+                  backdropFilter:"blur(10px)", WebkitBackdropFilter:"blur(10px)",
                 }}>
+                  {/* Label */}
                   <p style={{ fontSize:11, fontWeight:700, textTransform:"uppercase",
-                    letterSpacing:".18em", color:"rgba(255,255,255,.45)", margin:"0 0 28px" }}>
+                    letterSpacing:".2em", color:"rgba(255,255,255,.4)", margin:"0 0 24px" }}>
                     REST
                   </p>
 
                   {/* Circular countdown */}
-                  <div style={{ position:"relative", width:200, height:200 }}>
-                    <svg width="200" height="200" viewBox="0 0 200 200" style={{ position:"absolute", inset:0 }}>
-                      {/* Track */}
-                      <circle cx="100" cy="100" r={r} fill="none"
-                        stroke="rgba(255,255,255,.1)" strokeWidth="5"/>
-                      {/* Progress */}
-                      <circle cx="100" cy="100" r={r} fill="none"
-                        stroke="white" strokeWidth="5"
+                  <div style={{ position:"relative", width:176, height:176 }}>
+                    <svg width="176" height="176" viewBox="0 0 176 176" style={{ position:"absolute", inset:0 }}>
+                      <circle cx="88" cy="88" r={r} fill="none"
+                        stroke="rgba(255,255,255,.08)" strokeWidth="4"/>
+                      <circle cx="88" cy="88" r={r} fill="none"
+                        stroke="rgba(255,255,255,.9)" strokeWidth="4"
                         strokeLinecap="round"
                         strokeDasharray={circ}
                         strokeDashoffset={offset}
-                        transform="rotate(-90 100 100)"
+                        transform="rotate(-90 88 88)"
                         style={{ transition:"stroke-dashoffset 1s linear" }}
                       />
                     </svg>
-                    {/* Number inside ring */}
                     <div style={{ position:"absolute", inset:0, display:"flex",
                       flexDirection:"column", alignItems:"center", justifyContent:"center" }}>
-                      <span style={{
-                        fontSize:72, fontWeight:400, lineHeight:1, color:"white",
-                      }}>{restSeconds}</span>
-                      <span style={{ fontSize:11, fontWeight:700, textTransform:"uppercase",
-                        letterSpacing:".1em", color:"rgba(255,255,255,.4)", marginTop:4 }}>
-                        seconds
+                      <span style={{ fontSize:64, fontWeight:300, lineHeight:1, color:"white" }}>
+                        {restSeconds}
+                      </span>
+                      <span style={{ fontSize:10, fontWeight:700, textTransform:"uppercase",
+                        letterSpacing:".1em", color:"rgba(255,255,255,.35)", marginTop:4 }}>
+                        sec
                       </span>
                     </div>
                   </div>
 
-                  <p style={{ fontSize:14, color:"rgba(255,255,255,.45)", margin:"24px 0 32px",
-                    fontWeight:500 }}>
-                    {nextLabel}
-                  </p>
+                  {/* Set stats */}
+                  <div style={{ textAlign:"center", margin:"20px 0 6px" }}>
+                    {statLine && (
+                      <p style={{ fontSize:14, fontWeight:500,
+                        color: lastSetStats?.bad === 0 ? "rgba(209,244,125,.85)" : "rgba(255,160,70,.85)",
+                        margin:"0 0 6px" }}>
+                        {statLine}
+                      </p>
+                    )}
+                    <p style={{ fontSize:12, color:"rgba(255,255,255,.3)", margin:0, fontWeight:500 }}>
+                      {nextLabel}
+                    </p>
+                  </div>
 
+                  {/* Skip button */}
                   <button onClick={advanceAfterRest} style={{
-                    background:"rgba(255,255,255,.12)",
-                    border:"1px solid rgba(255,255,255,.22)", borderRadius:12,
-                    padding:"11px 28px", color:"rgba(255,255,255,.8)",
-                    fontSize:14, fontWeight:600, cursor:"pointer",
-                    backdropFilter:"blur(12px)", WebkitBackdropFilter:"blur(12px)",
+                    marginTop:28,
+                    background:"rgba(255,255,255,.1)",
+                    border:"1px solid rgba(255,255,255,.18)", borderRadius:10,
+                    padding:"10px 26px", color:"rgba(255,255,255,.7)",
+                    fontSize:13, fontWeight:600, cursor:"pointer", letterSpacing:".02em",
                   }}>
-                    Skip Rest →
+                    Skip Rest
                   </button>
                 </div>
               );
