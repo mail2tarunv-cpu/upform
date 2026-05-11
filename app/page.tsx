@@ -9,16 +9,16 @@ const WORKOUTS = [
   {
     name: "Shoulder & Squat Day",
     exercises: [
-      { name: "Squats",         sets: 3, reps: 12, type: "squat"    as const },
       { name: "Shoulder Press", sets: 3, reps: 12, type: "press"    as const },
       { name: "Lateral Raises", sets: 3, reps: 12, type: "raise"    as const },
+      { name: "Squats",         sets: 3, reps: 12, type: "squat"    as const },
     ],
   },
   {
     name: "Legs & Core Day",
     exercises: [
-      { name: "Squats",         sets: 4, reps: 10, type: "squat"    as const },
       { name: "Leg Press",      sets: 3, reps: 12, type: "legpress" as const },
+      { name: "Squats",         sets: 4, reps: 10, type: "squat"    as const },
       { name: "Lateral Raises", sets: 3, reps: 15, type: "raise"    as const },
     ],
   },
@@ -33,17 +33,17 @@ const WORKOUTS = [
   {
     name: "Full Body A",
     exercises: [
-      { name: "Squats",         sets: 3, reps: 12, type: "squat" as const },
       { name: "Shoulder Press", sets: 3, reps: 10, type: "press" as const },
       { name: "Lateral Raises", sets: 2, reps: 12, type: "raise" as const },
+      { name: "Squats",         sets: 3, reps: 12, type: "squat" as const },
     ],
   },
   {
     name: "Full Body B",
     exercises: [
-      { name: "Squats",         sets: 4, reps: 10, type: "squat" as const },
       { name: "Lateral Raises", sets: 3, reps: 12, type: "raise" as const },
       { name: "Shoulder Press", sets: 2, reps: 10, type: "press" as const },
+      { name: "Squats",         sets: 4, reps: 10, type: "squat" as const },
     ],
   },
 ];
@@ -61,7 +61,7 @@ const MODES = [
   { id: "glasses", icon: "🥽", label: "Check-in Meta Glasses", sub: "Hands-free tracking" },
 ];
 
-type Screen     = "home" | "routines" | "profile" | "workout" | "camera";
+type Screen     = "home" | "routines" | "profile" | "workout" | "tutorial" | "camera";
 type PermState  = "idle" | "granted" | "denied";
 type RepFlash   = "good" | "bad" | null;
 type FormStatus = "good" | "bad" | "neutral";
@@ -120,8 +120,8 @@ export default function Page() {
   const todayIdx = today.getDay();
 
   const [onboarded,    setOnboarded]    = useState<boolean | null>(null); // null = checking
-  const [onboardStep,  setOnboardStep]  = useState(0);                   // 0-3 intro, 4 name, 5-8 profile, 9 schedule, 10 loader
-  const [selectedDays, setSelectedDays] = useState<number[]>([1, 3, 5]); // day-of-week indices
+  const [onboardStep,  setOnboardStep]  = useState(0);                   // 0-3 intro, 4 name, 5-8 profile, 9 freq, 10 days, 11 loader
+  const [selectedDays, setSelectedDays] = useState<number[]>([]); // day-of-week indices
   const [daysPerWeek,  setDaysPerWeek]  = useState(3);
   const [userName,     setUserName]     = useState(() =>
     typeof window !== "undefined" ? (localStorage.getItem("upform_name") || "") : ""
@@ -132,8 +132,10 @@ export default function Page() {
   const [selectedGoals,setSelectedGoals]= useState<string[]>([]);
   const [heightUnit,   setHeightUnit]   = useState<"cm"|"ft">("cm");
   const [weightUnit,   setWeightUnit]   = useState<"kg"|"lbs">("kg");
+  const [daysFullFlash, setDaysFullFlash] = useState(false);
   const [screen,       setScreen]       = useState<Screen>("home");
   const [mode,         setMode]         = useState("glasses");
+  const [tutorialStep, setTutorialStep] = useState(1);
   const [permState,  setPermState]  = useState<PermState>("idle");
   const [exIdx,      setExIdx]      = useState(0);
   const [reps,       setReps]       = useState(0);
@@ -516,7 +518,7 @@ export default function Page() {
 
     const analyze = (lm: any[], canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D) => {
       const exercise  = activeWorkoutRef.current.exercises[exIdx];
-      if (exercise.type === "legpress") return; // manual counting — no pose detection
+      if (exercise.type === "legpress") return; // manual counting, no pose detection
       const L         = { sh: lm[11], el: lm[13], wr: lm[15], hip: lm[23], kn: lm[25], ank: lm[27] };
       const R         = { sh: lm[12], el: lm[14], wr: lm[16], hip: lm[24], kn: lm[26], ank: lm[28] };
       const visible   = exercise.type === "squat"
@@ -541,12 +543,12 @@ export default function Page() {
       // ── STEP 1: Position & visibility guidance ─────────────────
       if (!visible) {
         setNoBody(true);
-        showCue(exercise.type === "squat" ? "Step back — need to see full body" : "Keep upper body visible");
+        showCue(exercise.type === "squat" ? "Step back, need to see full body" : "Keep upper body visible");
         if (nowMs - coach.lastCueTime > 5000 && coach.positionCuesSaid < 2) {
           coach.lastCueTime = nowMs;
           coach.positionCuesSaid++;
           speakFn(exercise.type === "squat"
-            ? "Step back so I can see your full body — hips and knees need to be visible."
+            ? "Step back so I can see your full body. Hips and knees need to be visible."
             : "Step back and face the camera. I need to see your shoulders, arms, and hands.");
         }
         return;
@@ -559,7 +561,7 @@ export default function Page() {
         if (nowMs - coach.lastCueTime > 4500 && coach.faceCuesSaid < 2) {
           coach.lastCueTime = nowMs;
           coach.faceCuesSaid++;
-          speakFn("Move back a little — I need to see your face too.");
+          speakFn("Move back a little, I need to see your face too.");
         }
         showCue("Move back so I can see your face");
         return;
@@ -602,7 +604,7 @@ export default function Page() {
           coach.readyToDetect = true;
           showCue("", "neutral");
         } else {
-          // Still speaking the intro — do nothing, no form lines yet
+          // Still speaking the intro, no form lines yet
           showCue("", "neutral");
           return;
         }
@@ -616,7 +618,7 @@ export default function Page() {
       const prevPhase = rs.phase;
 
       if (exercise.type === "raise") {
-        // Only flag "too high" if wrists are clearly above shoulder — 0.08 gap
+        // Only flag "too high" if wrists are clearly above shoulder, 0.08 gap
         const tooHigh = wy < sy - 0.08;
         const lineY   = sy * H;
 
@@ -632,7 +634,7 @@ export default function Page() {
         ctx.setLineDash([]);
         ctx.font = "bold 13px system-ui";
         ctx.fillStyle = tooHigh ? "rgba(255,80,80,.9)" : "rgba(255,200,80,.9)";
-        ctx.fillText("shoulder height — stop here", W * 0.05, lineY - 8);
+        ctx.fillText("shoulder height, stop here", W * 0.05, lineY - 8);
         ctx.restore();
 
         // Phase transitions
@@ -717,7 +719,7 @@ export default function Page() {
 
           case "LOWERING":
             // Rep counted once wrist drops 10 % from its peak.
-            // For a strong press (peak ≈ 0.22 with sy=0.5) this fires at ≈ 0.32 —
+            // For a strong press (peak ≈ 0.22 with sy=0.5) this fires at ≈ 0.32
             // well inside the visible top-zone box, "between the top line".
             if (wy > rs.peakWristY + 0.10 && rs.topReached) {
               rep             = true;
@@ -737,7 +739,7 @@ export default function Page() {
         // Bad form cues (override cue text)
         if (tooLow) {
           bad = true; rs.badFormThisRep = true; rs.badFormType = "tooLow";
-          cue = "Don't drop too low — return to shoulder height";
+          cue = "Don't drop too low, return to shoulder height";
           if (!rs.badFormSpoken) {
             rs.badFormSpoken = true;
             speakFn("Too low! Return to shoulder height.", true);
@@ -747,13 +749,13 @@ export default function Page() {
           cue = "Keep both arms even";
           if (!rs.badFormSpoken) {
             rs.badFormSpoken = true;
-            speakFn("Your arms aren't level — press both hands evenly.", true);
+            speakFn("Your arms aren't level, press both hands evenly.", true);
           }
         } else {
           const cueMap: Record<PressPhase, string> = {
-            "READY_BOTTOM" : "Weights at shoulder height — press up",
-            "PRESSING_UP"  : "Keep pressing — extend fully",
-            "TOP_REACHED"  : "Full extension — now lower slowly",
+            "READY_BOTTOM" : "Weights at shoulder height, press up",
+            "PRESSING_UP"  : "Keep pressing, extend fully",
+            "TOP_REACHED"  : "Full extension, now lower slowly",
             "LOWERING"     : "Lower to shoulder height",
           };
           cue = cueMap[rs.pressPhase];
@@ -832,7 +834,7 @@ export default function Page() {
         // ── SQUAT DETECTION ──────────────────────────────────────
         const lowerVisible = [L.ank, R.ank].every(p => p && p.visibility > 0.25);
         if (!lowerVisible) {
-          showCue("Step back — need to see ankles too");
+          showCue("Step back, need to see ankles too");
           return;
         }
 
@@ -863,22 +865,22 @@ export default function Page() {
         }
 
         if (prevSquatPhase !== "BOTTOM" && rs.squatPhase === "BOTTOM") {
-          speakFn("Good depth — drive through your heels.", true);
+          speakFn("Good depth, drive through your heels.", true);
         }
 
         if (kneeCave) {
           bad = true; rs.badFormThisRep = true; rs.badFormType = "kneeCave";
-          cue = "Push knees out — track over toes";
+          cue = "Push knees out, track over toes";
           if (!rs.badFormSpoken) {
             rs.badFormSpoken = true;
-            speakFn("Push your knees out — track them over your toes.", true);
+            speakFn("Push your knees out, track them over your toes.", true);
           }
         } else {
           const cueMap: Record<SquatPhase, string> = {
-            "STANDING"   : "Sit back and down — reach depth",
-            "DESCENDING" : "Keep going — reach parallel",
-            "BOTTOM"     : "Good depth — drive through heels",
-            "ASCENDING"  : "Stand tall — squeeze glutes",
+            "STANDING"   : "Sit back and down, reach depth",
+            "DESCENDING" : "Keep going, reach parallel",
+            "BOTTOM"     : "Good depth, drive through heels",
+            "ASCENDING"  : "Stand tall, squeeze glutes",
           };
           cue = cueMap[rs.squatPhase];
         }
@@ -964,7 +966,7 @@ export default function Page() {
               ? "Ready for the next rep? Brace your core and press up."
               : exercise.type === "squat"
                 ? "Ready for the next rep? Brace your core and squat down."
-                : "Next rep — lift your arms out to the sides."));
+                : "Next rep, lift your arms out to the sides."));
       }
 
       // ── STEP 5: Count rep + voice + milestones ─────────────────
@@ -989,7 +991,7 @@ export default function Page() {
             // ── BAD REP: don't count, ask them to redo ──
             rs.badReps += 1;
             speakFn("Wrong rep. Try again.", true);
-            // Counter stays the same — no setReps call
+            // Counter stays the same, no setReps call
           } else {
             // ── GOOD REP: count it ──
             rs.count += 1;
@@ -1008,7 +1010,7 @@ export default function Page() {
               setTimeout(() => speakFn("Two more."), 1000);
             } else if (rs.count === exercise.reps - 1 && coach.lastEncouragementRep < exercise.reps - 1) {
               coach.lastEncouragementRep = exercise.reps - 1;
-              setTimeout(() => speakFn("Last one — make it count!"), 1000);
+              setTimeout(() => speakFn("Last one, make it count!"), 1000);
             }
 
             if (rs.count >= exercise.reps) {
@@ -1168,15 +1170,15 @@ export default function Page() {
       setOnboarded(true);
     };
 
-    // ── Loader (step 10) — auto-advances after 4.5 s ──
-    if (onboardStep === 10) {
+    // ── Loader (step 11): auto-advances after 4.5 s ──
+    if (onboardStep === 11) {
       return (
         <_LoaderScreen onDone={finish} />
       );
     }
 
     // ── Profile screens (steps 5–8): height / weight / age / goals ──
-    if (onboardStep >= 5) {
+    if (onboardStep >= 5 && onboardStep <= 8) {
       const profileIdx  = onboardStep - 5; // 0–3
       const isLastProf  = profileIdx === 3;
       const GOALS = ["Build Muscle","Lose Weight","Improve Endurance","Better Form","Stay Active"];
@@ -1205,7 +1207,7 @@ export default function Page() {
               <p style={{ fontSize:13, fontWeight:700, textTransform:"uppercase",
                 letterSpacing:".12em", color:"var(--color-forest-canopy)",
                 margin:"0 0 8px" }}>
-                Hi {userName.trim() || "there"} 👋
+                Hi {userName.trim() || "there"}
               </p>
               <h2 style={{ fontSize:28, fontWeight:700, letterSpacing:"-.02em",
                 color:"var(--color-ink)", margin:"0 0 6px" }}>
@@ -1218,7 +1220,7 @@ export default function Page() {
                 {profileIdx === 0 && "We use this to calibrate your movement tracking."}
                 {profileIdx === 1 && "This helps us set the right intensity for your workouts."}
                 {profileIdx === 2 && "Age helps us tailor recovery time and exercise selection."}
-                {profileIdx === 3 && "Pick everything that applies — we'll build around it."}
+                {profileIdx === 3 && "Select your goals and we'll build a custom plan around them."}
               </p>
 
               {/* ── Height ── */}
@@ -1344,24 +1346,14 @@ export default function Page() {
       );
     }
 
-    // ── Schedule screen (step 9) ──
+    // ── Step 9: How many days a week? ──
     if (onboardStep === 9) {
-      const FULL_DAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
       const handleFreqSelect = (n: number) => {
         setDaysPerWeek(n);
-        setSelectedDays(DEFAULT_DAYS[n]);
+        setSelectedDays([]);
+        localStorage.setItem("workoutDaysCount", String(n));
+        localStorage.setItem("upform_days_per_week", String(n));
       };
-      const toggleDay = (idx: number) => {
-        setSelectedDays(prev => {
-          if (prev.includes(idx)) {
-            if (prev.length <= 1) return prev;
-            return prev.filter(d => d !== idx);
-          }
-          if (prev.length >= daysPerWeek) return prev;
-          return [...prev, idx];
-        });
-      };
-      const canContinue = selectedDays.length === daysPerWeek;
       return (
         <div className="app">
           <div className="mobile-frame" style={{
@@ -1373,23 +1365,18 @@ export default function Page() {
                 background:"none", border:"none", padding:0, marginBottom:32,
                 color:"var(--color-muted-ash)", fontSize:22, cursor:"pointer",
               }}>←</button>
-              <p style={{ fontSize:13, fontWeight:700, textTransform:"uppercase",
-                letterSpacing:".12em", color:"var(--color-forest-canopy)", margin:"0 0 8px" }}>
-                Your Schedule
-              </p>
               <h2 style={{ fontSize:28, fontWeight:700, letterSpacing:"-.02em",
-                color:"var(--color-ink)", margin:"0 0 6px" }}>
-                How often do you want to train?
+                color:"var(--color-ink)", margin:"0 0 12px" }}>
+                How many days a week do you want to train?
               </h2>
-              <p style={{ fontSize:14, color:"var(--color-muted-ash)", margin:"0 0 28px" }}>
-                Pick a frequency, then choose which days work for you.
+              <p style={{ fontSize:14, color:"var(--color-muted-ash)", margin:"0 0 36px", lineHeight:1.6 }}>
+                We'll build a plan around your schedule.
               </p>
 
-              {/* Frequency buttons */}
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginBottom:28 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
                 {[2,3,4,5].map(n => (
                   <button key={n} onClick={() => handleFreqSelect(n)} style={{
-                    height:52, borderRadius:14, fontSize:18, fontWeight:700, cursor:"pointer",
+                    height:64, borderRadius:16, fontSize:22, fontWeight:800, cursor:"pointer",
                     background: daysPerWeek === n ? "var(--color-forest-canopy)" : "transparent",
                     border:`1.5px solid ${daysPerWeek === n ? "var(--color-forest-canopy)" : "var(--color-stone)"}`,
                     color: daysPerWeek === n ? "var(--color-ink)" : "var(--color-muted-ash)",
@@ -1399,23 +1386,75 @@ export default function Page() {
                   </button>
                 ))}
               </div>
-              <p style={{ fontSize:11, fontWeight:700, textTransform:"uppercase",
-                letterSpacing:".1em", color:"var(--color-muted-ash)", margin:"0 0 12px" }}>
-                Days per week
+              <p style={{ fontSize:12, color:"var(--color-muted-ash)", marginTop:10, textAlign:"center" }}>
+                days per week
+              </p>
+            </div>
+
+            <div style={{ paddingTop:32 }}>
+              <button
+                onClick={() => { setSelectedDays([]); setDaysFullFlash(false); setOnboardStep(10); }}
+                style={{
+                  width:"100%", height:54, background:"var(--color-forest-canopy)",
+                  border:"none", borderRadius:16, fontSize:17, fontWeight:700,
+                  color:"var(--color-ink)", cursor:"pointer", marginBottom:12,
+                }}>
+                Next
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Step 10: Which days work best? ──
+    if (onboardStep === 10) {
+      const DAY_LABELS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+      const toggleDay = (idx: number) => {
+        setSelectedDays(prev => {
+          if (prev.includes(idx)) return prev.filter(d => d !== idx);
+          if (prev.length >= daysPerWeek) {
+            setDaysFullFlash(true);
+            setTimeout(() => setDaysFullFlash(false), 2000);
+            return prev;
+          }
+          return [...prev, idx];
+        });
+      };
+      const canContinue = selectedDays.length === daysPerWeek;
+      return (
+        <div className="app">
+          <div className="mobile-frame" style={{
+            display:"flex", flexDirection:"column",
+            padding:"56px 32px 44px", justifyContent:"space-between", minHeight:"100vh",
+          }}>
+            <div>
+              <button onClick={() => setOnboardStep(9)} style={{
+                background:"none", border:"none", padding:0, marginBottom:32,
+                color:"var(--color-muted-ash)", fontSize:22, cursor:"pointer",
+              }}>←</button>
+              <h2 style={{ fontSize:28, fontWeight:700, letterSpacing:"-.02em",
+                color:"var(--color-ink)", margin:"0 0 12px" }}>
+                Which days work best for you?
+              </h2>
+              <p style={{ fontSize:14, color:"var(--color-muted-ash)", margin:"0 0 8px", lineHeight:1.6 }}>
+                Select {daysPerWeek} days. ({selectedDays.length}/{daysPerWeek} chosen)
+              </p>
+              <p style={{
+                fontSize:12, color:"#e05c3a", margin:"0 0 24px", lineHeight:1.5,
+                opacity: daysFullFlash ? 1 : 0, transition:"opacity .2s",
+              }}>
+                You&apos;ve selected {daysPerWeek} day{daysPerWeek !== 1 ? "s" : ""} max
               </p>
 
-              {/* Day toggles */}
-              <p style={{ fontSize:13, fontWeight:600, color:"var(--color-ink)", margin:"0 0 12px" }}>
-                Which days? ({selectedDays.length}/{daysPerWeek} selected)
-              </p>
-              <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-                {FULL_DAYS.map((label, idx) => {
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                {DAY_LABELS.map((label, idx) => {
                   const on = selectedDays.includes(idx);
                   const full = selectedDays.length >= daysPerWeek && !on;
                   return (
                     <button key={idx} onClick={() => toggleDay(idx)} style={{
-                      height:44, minWidth:44, padding:"0 12px", borderRadius:12,
-                      fontSize:13, fontWeight:700, cursor: full ? "not-allowed" : "pointer",
+                      height:48, minWidth:58, padding:"0 14px", borderRadius:14,
+                      fontSize:14, fontWeight:700, cursor: full ? "not-allowed" : "pointer",
                       background: on ? "var(--color-forest-canopy)" : "transparent",
                       border:`1.5px solid ${on ? "var(--color-forest-canopy)" : "var(--color-stone)"}`,
                       color: on ? "var(--color-ink)" : full ? "var(--color-stone)" : "var(--color-muted-ash)",
@@ -1430,7 +1469,12 @@ export default function Page() {
 
             <div style={{ paddingTop:32 }}>
               <button
-                onClick={() => canContinue && setOnboardStep(10)}
+                onClick={() => {
+                  if (!canContinue) return;
+                  localStorage.setItem("workoutDays", JSON.stringify(selectedDays));
+                  localStorage.setItem("upform_selected_days", JSON.stringify(selectedDays));
+                  setOnboardStep(11);
+                }}
                 disabled={!canContinue}
                 style={{
                   width:"100%", height:54, background:"var(--color-forest-canopy)",
@@ -1438,15 +1482,7 @@ export default function Page() {
                   color:"var(--color-ink)", cursor: canContinue ? "pointer" : "not-allowed",
                   opacity: canContinue ? 1 : 0.45, marginBottom:12,
                 }}>
-                Continue
-              </button>
-              <input ref={importFileRef} type="file" accept=".json"
-                style={{ display:"none" }} onChange={handleImport} />
-              <button onClick={() => importFileRef.current?.click()} style={{
-                background:"none", border:"none", color:"var(--color-muted-ash)",
-                fontSize:14, fontWeight:500, cursor:"pointer", width:"100%",
-              }}>
-                Import Workout File
+                Build My Plan
               </button>
             </div>
           </div>
@@ -1518,34 +1554,26 @@ export default function Page() {
     const INTRO = [
       {
         img: "https://cdn.undraw.co/illustration/working-out_6ksl.svg?type=svg",
-        eyebrow: null,
         title: "UpForm",
         body: "Train smarter. Move better.",
-        cta: "Get Started",
         isSplash: true,
       },
       {
         img: "https://cdn.undraw.co/illustration/morning-workout_73u9.svg?type=svg",
-        eyebrow: "Step 1",
         title: "Plan Your Workout",
         body: "Set your goals, pick your exercises, and build a routine that fits around your life.",
-        cta: "Next",
         isSplash: false,
       },
       {
         img: "https://cdn.undraw.co/illustration/athletes-training_koqa.svg?type=svg",
-        eyebrow: "Step 2",
         title: "Perfect Your Form",
-        body: "Real-time AI coaching watches every rep and gives instant feedback — train safely, see results faster.",
-        cta: "Next",
+        body: "Real-time AI coaching watches every rep and gives instant feedback. Train safely, see results faster.",
         isSplash: false,
       },
       {
         img: "https://cdn.undraw.co/illustration/fitness-stats_bd09.svg?type=svg",
-        eyebrow: "Step 3",
         title: "Track Every Rep",
         body: "Only clean reps count. Watch your consistency turn into measurable progress.",
-        cta: "Get Started",
         isSplash: false,
       },
     ];
@@ -1556,26 +1584,26 @@ export default function Page() {
       <div className="app">
         <div className="mobile-frame" style={{
           display:"flex", flexDirection:"column",
-          padding: intro.isSplash ? "72px 32px 44px" : "60px 32px 44px",
-          justifyContent:"space-between", minHeight:"100vh",
+          padding:"60px 32px 44px",
+          minHeight:"100vh",
         }}>
-          {/* Illustration */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={intro.img}
-            alt={intro.title}
-            style={{ width:"100%", maxWidth: intro.isSplash ? 300 : 260,
-              margin:"0 auto", display:"block" }}
-          />
+          {/* Illustration: fixed top 45% area */}
+          <div style={{
+            height:"45vh", display:"flex", alignItems:"center", justifyContent:"center",
+          }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={intro.img}
+              alt={intro.title}
+              style={{ maxHeight:"100%", maxWidth:260, objectFit:"contain", display:"block" }}
+            />
+          </div>
 
-          {/* Text */}
-          <div style={{ flex:1, paddingTop:40 }}>
-            {intro.eyebrow && (
-              <p style={{ fontSize:11, fontWeight:700, textTransform:"uppercase",
-                letterSpacing:".16em", color:"var(--color-forest-canopy)", margin:"0 0 10px" }}>
-                {intro.eyebrow}
-              </p>
-            )}
+          {/* Text: left-aligned for features, center for splash */}
+          <div style={{
+            flex:1, paddingTop:32,
+            textAlign: intro.isSplash ? "center" : "left",
+          }}>
             <h1 style={{
               fontSize: intro.isSplash ? 52 : 30,
               fontWeight: intro.isSplash ? 800 : 700,
@@ -1590,19 +1618,17 @@ export default function Page() {
           </div>
 
           {/* Bottom controls */}
-          <div style={{ width:"100%", paddingTop:32 }}>
-            {/* Dot indicators (steps 1–3 only) */}
-            {!intro.isSplash && (
-              <div style={{ display:"flex", gap:8, justifyContent:"center", marginBottom:28 }}>
-                {[1,2,3].map(i => (
-                  <div key={i} style={{
-                    height:7, borderRadius:4, transition:"width .3s",
-                    width: i === onboardStep ? 28 : 7,
-                    background: i === onboardStep ? "var(--color-forest-canopy)" : "var(--color-stone)",
-                  }}/>
-                ))}
-              </div>
-            )}
+          <div style={{ width:"100%", paddingTop:28 }}>
+            {/* Dot indicators: all 4 intro screens */}
+            <div style={{ display:"flex", gap:8, justifyContent:"center", marginBottom:28 }}>
+              {[0,1,2,3].map(i => (
+                <div key={i} style={{
+                  height:7, borderRadius:4, transition:"width .3s",
+                  width: i === onboardStep ? 28 : 7,
+                  background: i === onboardStep ? "var(--color-forest-canopy)" : "var(--color-stone)",
+                }}/>
+              ))}
+            </div>
 
             <button
               onClick={() => onboardStep < 3 ? setOnboardStep(s => s + 1) : setOnboardStep(4)}
@@ -1612,10 +1638,10 @@ export default function Page() {
                 color:"var(--color-ink)", cursor:"pointer", marginBottom:14,
               }}
             >
-              {intro.cta}
+              Next
             </button>
 
-            {/* Existing user — skips all onboarding */}
+            {/* Existing user: skips all onboarding */}
             <button onClick={finish} style={{
               background:"none", border:"none", color:"var(--color-muted-ash)",
               fontSize:14, fontWeight:500, cursor:"pointer", width:"100%",
@@ -1766,12 +1792,12 @@ export default function Page() {
               {DAYS[todayIdx]}, {MONTHS[today.getMonth()]} {today.getDate()}
             </p>
             <h1 style={{ fontSize:34, fontWeight:800, letterSpacing:"-.02em",
-              lineHeight:1.05, color:"var(--color-ink)" }}>
+              lineHeight:1.05, color:"#1A1A1A" }}>
               Hi {userName || "there"}
             </h1>
           </div>
 
-          {/* Workout card — driven by selected calendar day */}
+          {/* Workout card: driven by selected calendar day */}
           {selectedWorkout ? (
             <>
               <div className="card pad">
@@ -1796,14 +1822,6 @@ export default function Page() {
                   onClick={() => startRoutine(selectedWorkout, "home")}>
                   Start Workout
                 </button>
-                <input ref={importFileRef} type="file" accept=".json"
-                  style={{ display:"none" }} onChange={handleImport}/>
-                <button onClick={() => importFileRef.current?.click()} style={{
-                  background:"none", border:"none", width:"100%", marginTop:8,
-                  fontSize:13, fontWeight:600, color:"var(--color-muted-ash)", cursor:"pointer",
-                }}>
-                  Import Workout
-                </button>
               </div>
             </>
           ) : (
@@ -1816,16 +1834,6 @@ export default function Page() {
                 <p style={{ fontSize:14, color:"var(--color-muted-ash)", margin:0, lineHeight:1.6 }}>
                   Recovery is part of the plan. Stay hydrated, sleep well, and come back stronger.
                 </p>
-              </div>
-              <div style={{ marginTop:12, textAlign:"center" }}>
-                <input ref={importFileRef} type="file" accept=".json"
-                  style={{ display:"none" }} onChange={handleImport}/>
-                <button onClick={() => importFileRef.current?.click()} style={{
-                  background:"none", border:"none",
-                  fontSize:13, fontWeight:600, color:"var(--color-muted-ash)", cursor:"pointer",
-                }}>
-                  Import Workout
-                </button>
               </div>
             </>
           )}
@@ -1845,7 +1853,19 @@ export default function Page() {
         </div>
         <main style={{ flex:1, overflowY:"auto", paddingBottom:16 }}>
           <h2 style={{ fontSize:28, fontWeight:800, color:"var(--color-ink)", marginBottom:4 }}>Routines</h2>
-          <p style={{ fontSize:13, color:"var(--color-muted-ash)", marginBottom:20 }}>Pick a workout and start tracking</p>
+          <p style={{ fontSize:13, color:"var(--color-muted-ash)", marginBottom:16 }}>Pick a workout and start tracking</p>
+
+          <input ref={importFileRef} type="file" accept=".json"
+            style={{ display:"none" }} onChange={handleImport}/>
+          <button onClick={() => importFileRef.current?.click()} style={{
+            width:"100%", height:44, borderRadius:14, marginBottom:16,
+            background:"transparent",
+            border:"1.5px solid var(--color-stone)",
+            fontSize:14, fontWeight:600, color:"var(--color-muted-ash)", cursor:"pointer",
+            display:"flex", alignItems:"center", justifyContent:"center", gap:8,
+          }}>
+            <span style={{ fontSize:16 }}>↑</span> Import Workout
+          </button>
 
           <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
             {WORKOUTS.map((w, i) => {
@@ -2002,63 +2022,136 @@ export default function Page() {
           <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:4, marginBottom:20 }}>
             <span className="eyebrow" style={{ marginBottom:2 }}>Correct Form</span>
 
-            {/* ── SQUAT DIAGRAM ── shown for squat-first workouts */}
-            {activeWorkoutRef.current.exercises[0]?.type !== "press" ? (
+            {activeWorkoutRef.current.exercises[0]?.type === "legpress" ? (
+              <svg viewBox="0 0 280 200" width="280" height="200" xmlns="http://www.w3.org/2000/svg">
+                {/* Machine: footplate (vertical rect, left side) */}
+                <rect x="18" y="42" width="14" height="85" rx="4" fill="#e0e0e0"/>
+                {/* Machine: seat base (horizontal, lower right) */}
+                <rect x="148" y="122" width="88" height="15" rx="4" fill="#e0e0e0"/>
+                {/* Machine: reclined seat back pad */}
+                <line x1="175" y1="130" x2="222" y2="75" stroke="#e0e0e0" strokeWidth="16" strokeLinecap="round"/>
+                {/* Machine: diagonal guide rail */}
+                <line x1="32" y1="62" x2="172" y2="125" stroke="#cccccc" strokeWidth="4" strokeLinecap="round"/>
+                {/* Head */}
+                <circle cx="228" cy="48" r="14" fill="none" stroke="#2a2a2a" strokeWidth="3"/>
+                {/* Torso: shoulder to hip, reclined ~33° from vertical */}
+                <line x1="220" y1="72" x2="188" y2="118" stroke="#2a2a2a" strokeWidth="4" strokeLinecap="round"/>
+                {/* Arms resting on thighs */}
+                <line x1="212" y1="87" x2="162" y2="90" stroke="#2a2a2a" strokeWidth="3" strokeLinecap="round"/>
+                {/* Thighs: hip to knees, 45° upper-left, lime green = active muscle */}
+                <line x1="188" y1="118" x2="133" y2="63" stroke="#AADD00" strokeWidth="5" strokeLinecap="round"/>
+                {/* Knee joint */}
+                <circle cx="133" cy="63" r="5" fill="#2a2a2a"/>
+                {/* Shins: knees down-left to footplate */}
+                <line x1="133" y1="63" x2="32" y2="83" stroke="#2a2a2a" strokeWidth="3" strokeLinecap="round"/>
+                {/* Feet on footplate */}
+                <line x1="32" y1="80" x2="32" y2="93" stroke="#2a2a2a" strokeWidth="4" strokeLinecap="round"/>
+              </svg>
+            ) : activeWorkoutRef.current.exercises[0]?.type !== "press" ? (
               <svg viewBox="0 0 180 220" width="150" height="182" fill="none" xmlns="http://www.w3.org/2000/svg">
-                {/* Depth guide line at hip-parallel */}
-                <line x1="12" y1="110" x2="168" y2="110"
+                {/* Depth guide at hip-parallel */}
+                <line x1="12" y1="122" x2="168" y2="122"
                   stroke="rgba(209,244,125,.45)" strokeWidth="1" strokeDasharray="5,4"/>
 
                 {/* Ground */}
                 <line x1="28" y1="208" x2="152" y2="208"
                   stroke="var(--color-stone)" strokeWidth="2" strokeLinecap="round"/>
 
-                {/* Left foot */}
-                <line x1="54" y1="208" x2="34" y2="208" stroke="rgba(26,26,26,.5)" strokeWidth="3" strokeLinecap="round"/>
-                {/* Right foot */}
-                <line x1="126" y1="208" x2="146" y2="208" stroke="rgba(26,26,26,.5)" strokeWidth="3" strokeLinecap="round"/>
-                {/* Left shin */}
-                <line x1="54" y1="208" x2="50" y2="160" stroke="rgba(26,26,26,.7)" strokeWidth="3.5" strokeLinecap="round"/>
-                {/* Right shin */}
-                <line x1="126" y1="208" x2="130" y2="160" stroke="rgba(26,26,26,.7)" strokeWidth="3.5" strokeLinecap="round"/>
+                {/* Foot (side view, facing right): static */}
+                <line x1="46" y1="208" x2="92" y2="208"
+                  stroke="rgba(26,26,26,.5)" strokeWidth="3" strokeLinecap="round"/>
 
-                {/* Animated upper body (squats up and down) */}
-                <g>
-                  <animateTransform attributeName="transform" type="translate"
-                    values="0,0; 0,22; 0,0" dur="2.6s" repeatCount="indefinite"
+                {/* Shin: animates forward/down as knee travels forward at depth */}
+                <line stroke="rgba(26,26,26,.7)" strokeWidth="3.5" strokeLinecap="round"
+                  x1="64" y1="208">
+                  <animate attributeName="x2" values="64;70;64" dur="2.6s" repeatCount="indefinite"
                     calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                  <animate attributeName="y2" values="162;176;162" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                </line>
 
-                  {/* Knee joints */}
-                  <circle cx="50" cy="160" r="5.5" fill="rgba(209,244,125,.75)"/>
-                  <circle cx="130" cy="160" r="5.5" fill="rgba(209,244,125,.75)"/>
+                {/* Knee joint */}
+                <circle r="5.5" fill="rgba(209,244,125,.75)">
+                  <animate attributeName="cx" values="64;70;64" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                  <animate attributeName="cy" values="162;176;162" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                </circle>
 
-                  {/* Left thigh */}
-                  <line x1="50" y1="160" x2="68" y2="110" stroke="rgba(26,26,26,.75)" strokeWidth="3.5" strokeLinecap="round"/>
-                  {/* Right thigh */}
-                  <line x1="130" y1="160" x2="112" y2="110" stroke="rgba(26,26,26,.75)" strokeWidth="3.5" strokeLinecap="round"/>
+                {/* Thigh: standing nearly vertical; depth ~45° back and up */}
+                <line stroke="rgba(26,26,26,.75)" strokeWidth="3.5" strokeLinecap="round">
+                  <animate attributeName="x1" values="64;70;64" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                  <animate attributeName="y1" values="162;176;162" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                  <animate attributeName="x2" values="68;102;68" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                  <animate attributeName="y2" values="110;124;110" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                </line>
 
-                  {/* Quad glow */}
-                  <ellipse cx="59" cy="135" rx="12" ry="22" fill="rgba(209,244,125,.18)" transform="rotate(-12 59 135)"/>
-                  <ellipse cx="121" cy="135" rx="12" ry="22" fill="rgba(209,244,125,.18)" transform="rotate(12 121 135)"/>
+                {/* Quad glow */}
+                <ellipse rx="10" ry="22" fill="rgba(209,244,125,.18)">
+                  <animate attributeName="cx" values="66;86;66" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                  <animate attributeName="cy" values="136;150;136" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                  <animateTransform attributeName="transform" type="rotate"
+                    values="5 66 136;42 86 150;5 66 136" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                </ellipse>
 
-                  {/* Hips */}
-                  <line x1="68" y1="110" x2="112" y2="110" stroke="rgba(26,26,26,.65)" strokeWidth="3" strokeLinecap="round"/>
+                {/* Hip joint */}
+                <circle r="4.5" fill="rgba(26,26,26,.45)">
+                  <animate attributeName="cx" values="68;102;68" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                  <animate attributeName="cy" values="110;124;110" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                </circle>
 
-                  {/* Torso */}
-                  <line x1="90" y1="110" x2="90" y2="54" stroke="rgba(26,26,26,.85)" strokeWidth="4" strokeLinecap="round"/>
+                {/* Torso/spine: slight forward lean increases at depth */}
+                <line stroke="rgba(26,26,26,.85)" strokeWidth="4" strokeLinecap="round">
+                  <animate attributeName="x1" values="68;102;68" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                  <animate attributeName="y1" values="110;124;110" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                  <animate attributeName="x2" values="72;114;72" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                  <animate attributeName="y2" values="62;76;62" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                </line>
 
-                  {/* Shoulders */}
-                  <line x1="64" y1="62" x2="116" y2="62" stroke="rgba(26,26,26,.8)" strokeWidth="3.5" strokeLinecap="round"/>
+                {/* Arm: extends forward for balance at depth */}
+                <line stroke="rgba(26,26,26,.7)" strokeWidth="3" strokeLinecap="round">
+                  <animate attributeName="x1" values="72;112;72" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                  <animate attributeName="y1" values="68;80;68" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                  <animate attributeName="x2" values="90;144;90" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                  <animate attributeName="y2" values="74;92;74" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                </line>
 
-                  {/* Arms forward (raised for balance) */}
-                  <line x1="64" y1="62" x2="36" y2="74" stroke="rgba(26,26,26,.7)" strokeWidth="3" strokeLinecap="round"/>
-                  <line x1="116" y1="62" x2="144" y2="74" stroke="rgba(26,26,26,.7)" strokeWidth="3" strokeLinecap="round"/>
+                {/* Neck */}
+                <line stroke="rgba(26,26,26,.8)" strokeWidth="3" strokeLinecap="round">
+                  <animate attributeName="x1" values="72;114;72" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                  <animate attributeName="y1" values="62;76;62" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                  <animate attributeName="x2" values="74;116;74" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                  <animate attributeName="y2" values="48;62;48" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                </line>
 
-                  {/* Neck */}
-                  <line x1="90" y1="41" x2="90" y2="54" stroke="rgba(26,26,26,.8)" strokeWidth="3" strokeLinecap="round"/>
-                  {/* Head */}
-                  <circle cx="90" cy="28" r="13" stroke="rgba(26,26,26,.8)" strokeWidth="2" fill="rgba(26,26,26,.06)"/>
-                </g>
+                {/* Head */}
+                <circle r="13" stroke="rgba(26,26,26,.8)" strokeWidth="2" fill="rgba(26,26,26,.06)">
+                  <animate attributeName="cx" values="74;116;74" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                  <animate attributeName="cy" values="35;49;35" dur="2.6s" repeatCount="indefinite"
+                    calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
+                </circle>
               </svg>
             ) : (
             <svg viewBox="0 0 180 220" width="150" height="182" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2093,7 +2186,7 @@ export default function Page() {
               <circle cx="63" cy="60" r="12" fill="rgba(255,140,40,.2)"/>
               <circle cx="117" cy="60" r="12" fill="rgba(255,140,40,.2)"/>
 
-              {/* LEFT UPPER ARM — amber deltoid */}
+              {/* LEFT UPPER ARM: amber deltoid */}
               <line x1="63" y1="60" stroke="rgba(230,130,30,.9)" strokeWidth="5" strokeLinecap="round">
                 <animate attributeName="x2" values="25;40;25" dur="2.8s" repeatCount="indefinite" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
                 <animate attributeName="y2" values="68;33;68" dur="2.8s" repeatCount="indefinite" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
@@ -2124,7 +2217,7 @@ export default function Page() {
                 <rect x="9"  y="-7"  width="7"  height="14" rx="2" fill="rgba(26,26,26,.45)"/>
               </g>
 
-              {/* RIGHT UPPER ARM — amber */}
+              {/* RIGHT UPPER ARM: amber */}
               <line x1="117" y1="60" stroke="rgba(230,130,30,.9)" strokeWidth="5" strokeLinecap="round">
                 <animate attributeName="x2" values="155;140;155" dur="2.8s" repeatCount="indefinite" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
                 <animate attributeName="y2" values="68;33;68"    dur="2.8s" repeatCount="indefinite" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
@@ -2207,7 +2300,7 @@ export default function Page() {
 
           <div className="sticky-cta">
             <button className="btn dark" style={{ width:"100%", fontSize:16 }}
-              onClick={() => setScreen("camera")}>
+              onClick={() => { setTutorialStep(1); setScreen("tutorial"); }}>
               Start
             </button>
           </div>
@@ -2217,7 +2310,319 @@ export default function Page() {
     </div>
   );
 
-  /* ─── CAMERA — fullscreen MediaPipe ────────────────────── */
+  /* ─── TUTORIAL: 3-step pre-workout guide ───────────────── */
+  if (screen === "tutorial") {
+    const STEPS = [
+      {
+        eyebrow: "FIND YOUR SPOT · 1 OF 3",
+        heading: "Step back to fit the frame",
+        body: "Stand far enough that your whole body is visible, head to feet. Green joints mean great form, red means adjust.",
+        cta: "Got it",
+        illustration: (
+          <svg viewBox="0 0 275 285" width="240" height="249" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <style>{`
+              @keyframes tut-pulse1 {
+                0%   { transform:scale(1);    opacity:.45; }
+                16.7%{ transform:scale(1.38); opacity:.65; }
+                33.3%{ transform:scale(1);    opacity:.45; }
+                49%  { transform:scale(1);    opacity:0;   }
+                95%  { transform:scale(1);    opacity:0;   }
+                100% { transform:scale(1);    opacity:.45; }
+              }
+              @keyframes tut-pulse2 {
+                0%   { transform:scale(1);   opacity:.2; }
+                16.7%{ transform:scale(1.6); opacity:.3; }
+                33.3%{ transform:scale(1);   opacity:.2; }
+                49%  { transform:scale(1);   opacity:0;  }
+                95%  { transform:scale(1);   opacity:0;  }
+                100% { transform:scale(1);   opacity:.2; }
+              }
+              @keyframes tut-red-op {
+                0%,33.3%{ opacity:1 }
+                50%     { opacity:0 }
+                95%,100%{ opacity:0 }
+              }
+              @keyframes tut-green-op {
+                0%,33.3%{ opacity:0 }
+                50%,95% { opacity:1 }
+                100%    { opacity:0 }
+              }
+              @keyframes tut-ghalo-op {
+                0%,33.3%{ opacity:0 }
+                50%,95% { opacity:.55 }
+                100%    { opacity:0 }
+              }
+              @keyframes tut-bad-op {
+                0%,33.3%{ opacity:1 }
+                50%     { opacity:0 }
+                95%,100%{ opacity:0 }
+              }
+              @keyframes tut-good-op {
+                0%,33.3%{ opacity:0 }
+                50%,95% { opacity:1 }
+                100%    { opacity:0 }
+              }
+              .th1{ transform-box:fill-box; transform-origin:center; animation:tut-pulse1 6s ease-in-out infinite; }
+              .th2{ transform-box:fill-box; transform-origin:center; animation:tut-pulse2 6s ease-in-out infinite; }
+              .tr { animation:tut-red-op   6s ease-in-out infinite; }
+              .tg { animation:tut-green-op 6s ease-in-out infinite; }
+              .tgh{ animation:tut-ghalo-op 6s ease-in-out infinite; }
+              .tb { animation:tut-bad-op   6s ease-in-out infinite; }
+              .tgd{ animation:tut-good-op  6s ease-in-out infinite; }
+            `}</style>
+
+            {/* Dashed oval */}
+            <ellipse cx="104" cy="150" rx="84" ry="114" stroke="var(--color-forest-canopy)" strokeWidth="2.5" strokeDasharray="6 5" fill="rgba(209,244,125,.08)"/>
+
+            {/* Ground shadow */}
+            <ellipse cx="104" cy="254" rx="33" ry="6" fill="rgba(26,26,26,.07)"/>
+
+            {/* Lower legs */}
+            <line x1="77" y1="204" x2="75" y2="248" stroke="rgba(26,26,26,.75)" strokeWidth="4" strokeLinecap="round"/>
+            <line x1="131" y1="204" x2="133" y2="248" stroke="rgba(26,26,26,.75)" strokeWidth="4" strokeLinecap="round"/>
+            {/* Upper legs */}
+            <line x1="84" y1="160" x2="77" y2="204" stroke="rgba(26,26,26,.82)" strokeWidth="4.5" strokeLinecap="round"/>
+            <line x1="124" y1="160" x2="131" y2="204" stroke="rgba(26,26,26,.82)" strokeWidth="4.5" strokeLinecap="round"/>
+            {/* Hips */}
+            <line x1="84" y1="160" x2="124" y2="160" stroke="rgba(26,26,26,.7)" strokeWidth="4" strokeLinecap="round"/>
+            {/* Torso */}
+            <line x1="104" y1="84" x2="104" y2="160" stroke="rgba(26,26,26,.88)" strokeWidth="5" strokeLinecap="round"/>
+            {/* Shoulders */}
+            <line x1="64" y1="100" x2="144" y2="100" stroke="rgba(26,26,26,.88)" strokeWidth="4.5" strokeLinecap="round"/>
+            {/* Neck */}
+            <line x1="104" y1="68" x2="104" y2="84" stroke="rgba(26,26,26,.82)" strokeWidth="4.5" strokeLinecap="round"/>
+            {/* Head */}
+            <circle cx="104" cy="52" r="17" stroke="rgba(26,26,26,.8)" strokeWidth="2.5" fill="rgba(26,26,26,.05)"/>
+            {/* Arms: angled down slightly */}
+            <line x1="64"  y1="100" x2="42" y2="136" stroke="rgba(26,26,26,.72)" strokeWidth="4" strokeLinecap="round"/>
+            <line x1="144" y1="100" x2="166" y2="136" stroke="rgba(26,26,26,.72)" strokeWidth="4" strokeLinecap="round"/>
+
+            {/* ── LEFT KNEE joint layers ── */}
+            <circle cx="77" cy="204" r="20" fill="#e05252" className="th2"/>
+            <circle cx="77" cy="204" r="14" fill="#e05252" className="th1"/>
+            <circle cx="77" cy="204" r="16" fill="rgba(209,244,125,1)" className="tgh"/>
+            <circle cx="77" cy="204" r="8"  fill="#e05252" className="tr"/>
+            <circle cx="77" cy="204" r="8"  fill="#5cb85c" className="tg"/>
+
+            {/* ── RIGHT KNEE joint layers ── */}
+            <circle cx="131" cy="204" r="20" fill="#e05252" className="th2"/>
+            <circle cx="131" cy="204" r="14" fill="#e05252" className="th1"/>
+            <circle cx="131" cy="204" r="16" fill="rgba(209,244,125,1)" className="tgh"/>
+            <circle cx="131" cy="204" r="8"  fill="#e05252" className="tr"/>
+            <circle cx="131" cy="204" r="8"  fill="#5cb85c" className="tg"/>
+
+            {/* ── TOOLTIP: Adjust knees ── */}
+            <g className="tb">
+              <line x1="139" y1="204" x2="158" y2="204" stroke="#e05252" strokeWidth="1.5" strokeDasharray="4 3" strokeLinecap="round"/>
+              <rect x="156" y="190" width="114" height="28" rx="14" fill="white" stroke="#f5c5c5" strokeWidth="1.5"/>
+              <circle cx="172" cy="204" r="9" fill="#e05252"/>
+              <text x="172" y="209" fontSize="13" fill="white" textAnchor="middle" fontFamily="Figtree,sans-serif" fontWeight="900">!</text>
+              <text x="187" y="208.5" fontSize="10.5" fill="rgba(26,26,26,.82)" fontFamily="Figtree,sans-serif" fontWeight="600">Adjust knees</text>
+            </g>
+
+            {/* ── TOOLTIP: Good form ── */}
+            <g className="tgd">
+              <line x1="139" y1="204" x2="158" y2="204" stroke="#5cb85c" strokeWidth="1.5" strokeDasharray="4 3" strokeLinecap="round"/>
+              <rect x="156" y="190" width="102" height="28" rx="14" fill="white" stroke="#c5e8c5" strokeWidth="1.5"/>
+              <circle cx="172" cy="204" r="9" fill="#5cb85c"/>
+              <polyline points="167,204 171,209 179,199" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+              <text x="187" y="208.5" fontSize="10.5" fill="rgba(26,26,26,.82)" fontFamily="Figtree,sans-serif" fontWeight="600">Good form</text>
+            </g>
+          </svg>
+        ),
+      },
+      {
+        eyebrow: "VOICE CUES · 2 OF 3",
+        heading: "Your coach talks to you",
+        body: "You\u2019ll hear audio cues when your form slips. Say \u201cnext\u201d to move to the next set, or \u201cstop\u201d to end the workout.",
+        cta: "Next",
+        illustration: (
+          <svg viewBox="0 0 240 218" width="240" height="218" fill="none" xmlns="http://www.w3.org/2000/svg">
+            {/* Central mic body */}
+            <rect x="104" y="46" width="32" height="52" rx="16" fill="rgba(209,244,125,.6)" stroke="rgba(26,26,26,.75)" strokeWidth="2.5"/>
+            {/* Mic grille lines */}
+            <line x1="111" y1="63" x2="129" y2="63" stroke="rgba(26,26,26,.25)" strokeWidth="1.5" strokeLinecap="round"/>
+            <line x1="111" y1="71" x2="129" y2="71" stroke="rgba(26,26,26,.25)" strokeWidth="1.5" strokeLinecap="round"/>
+            <line x1="111" y1="79" x2="129" y2="79" stroke="rgba(26,26,26,.25)" strokeWidth="1.5" strokeLinecap="round"/>
+            {/* Mic stand arc */}
+            <path d="M88,98 Q88,126 120,126 Q152,126 152,98" stroke="rgba(26,26,26,.7)" strokeWidth="2.5" strokeLinecap="round" fill="none"/>
+            {/* Stand pole + base */}
+            <line x1="120" y1="126" x2="120" y2="144" stroke="rgba(26,26,26,.7)" strokeWidth="2.5" strokeLinecap="round"/>
+            <line x1="104" y1="144" x2="136" y2="144" stroke="rgba(26,26,26,.65)" strokeWidth="2.5" strokeLinecap="round"/>
+            {/* Sound waves: left */}
+            <path d="M82,76 Q70,96 82,116"  stroke="rgba(209,244,125,.95)" strokeWidth="3"   strokeLinecap="round" fill="none"/>
+            <path d="M68,62 Q48,96 68,130"  stroke="rgba(209,244,125,.55)" strokeWidth="2.5" strokeLinecap="round" fill="none"/>
+            <path d="M54,48 Q24,96 54,144"  stroke="rgba(209,244,125,.22)" strokeWidth="2"   strokeLinecap="round" fill="none"/>
+            {/* Sound waves: right */}
+            <path d="M158,76 Q170,96 158,116"  stroke="rgba(209,244,125,.95)" strokeWidth="3"   strokeLinecap="round" fill="none"/>
+            <path d="M172,62 Q192,96 172,130"  stroke="rgba(209,244,125,.55)" strokeWidth="2.5" strokeLinecap="round" fill="none"/>
+            <path d="M186,48 Q216,96 186,144"  stroke="rgba(209,244,125,.22)" strokeWidth="2"   strokeLinecap="round" fill="none"/>
+
+            {/* ── Speech bubble "next": top-right of mic, tail points bottom-left toward mic body ── */}
+            <rect x="148" y="6" width="80" height="30" rx="12" fill="white" stroke="rgba(26,26,26,.13)" strokeWidth="1.5"/>
+            {/* tail: bottom-left corner of bubble pointing toward mic top */}
+            <path d="M160,34 L152,34 L140,50" fill="white" stroke="rgba(26,26,26,.13)" strokeWidth="1.5" strokeLinejoin="round"/>
+            <line x1="153" y1="34" x2="160" y2="34" stroke="white" strokeWidth="2.5"/>
+            <text x="188" y="26" fontSize="12" fill="rgba(26,26,26,.75)" textAnchor="middle" fontFamily="Figtree,sans-serif" fontWeight="700">&quot;next&quot;</text>
+
+            {/* ── Speech bubble "stop": below mic base, tail points up toward base ── */}
+            <rect x="80" y="158" width="80" height="30" rx="12" fill="white" stroke="rgba(26,26,26,.13)" strokeWidth="1.5"/>
+            {/* tail: top-center pointing up to mic base */}
+            <path d="M113,158 L127,158 L120,144" fill="white" stroke="rgba(26,26,26,.13)" strokeWidth="1.5" strokeLinejoin="round"/>
+            <line x1="114" y1="158" x2="126" y2="158" stroke="white" strokeWidth="2.5"/>
+            <text x="120" y="178" fontSize="12" fill="rgba(26,26,26,.75)" textAnchor="middle" fontFamily="Figtree,sans-serif" fontWeight="700">&quot;stop&quot;</text>
+          </svg>
+        ),
+      },
+      {
+        eyebrow: "YOU'RE ALL SET · 3 OF 3",
+        heading: "Put on your glasses and go",
+        body: "Wear your Meta glasses, step into position, and the session starts automatically. Your coach is with you the whole way.",
+        cta: "Start workout",
+        illustration: (
+          <div style={{ position:"relative", width:240, height:240, display:"flex", alignItems:"center", justifyContent:"center" }}>
+            <style>{`
+              @keyframes cel3-ring {
+                0%   { transform:scale(.72); opacity:.7; }
+                100% { transform:scale(2.1); opacity:0;  }
+              }
+              @keyframes cel3-twinkle-a { 0%,100%{opacity:1;transform:scale(1) rotate(0deg)}   50%{opacity:.4;transform:scale(1.4) rotate(22deg)}  }
+              @keyframes cel3-twinkle-b { 0%,100%{opacity:.8;transform:scale(1) rotate(0deg)}  50%{opacity:.3;transform:scale(1.3) rotate(-18deg)} }
+              @keyframes cel3-twinkle-c { 0%,100%{opacity:.6;transform:scale(.8) rotate(0deg)} 50%{opacity:1;transform:scale(1.2) rotate(12deg)}   }
+            `}</style>
+
+            {/* Pulsing rings: 3 staggered */}
+            {[0, 0.9, 1.8].map((d, i) => (
+              <div key={i} style={{
+                position:"absolute", inset:0, margin:"auto",
+                width:180, height:180, borderRadius:"50%",
+                border:"2.5px solid var(--color-forest-canopy)",
+                animation:`cel3-ring 2.7s ease-out ${d}s infinite`,
+              }}/>
+            ))}
+
+            {/* Soft glow disc behind image */}
+            <div style={{
+              position:"absolute", inset:0, margin:"auto",
+              width:170, height:170, borderRadius:"50%",
+              background:"radial-gradient(circle, rgba(209,244,125,.22) 0%, rgba(209,244,125,0) 70%)",
+            }}/>
+
+            {/* Image */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/glasses-nobg.png" alt="Person putting on AR glasses"
+              style={{ width:210, height:210, objectFit:"contain", position:"relative", zIndex:1 }}/>
+
+            {/* Sparkle overlay: 4-pointed stars at scattered positions */}
+            <svg viewBox="0 0 240 240" width="240" height="240"
+              style={{ position:"absolute", inset:0, zIndex:2, pointerEvents:"none", overflow:"visible" }}>
+              {[
+                { cx:22,  cy:30,  r:8,  anim:"cel3-twinkle-a", delay:"0s",    dur:"2s"   },
+                { cx:218, cy:22,  r:6,  anim:"cel3-twinkle-b", delay:"0.5s",  dur:"1.8s" },
+                { cx:232, cy:118, r:7,  anim:"cel3-twinkle-c", delay:"1.1s",  dur:"2.2s" },
+                { cx:210, cy:216, r:5,  anim:"cel3-twinkle-a", delay:"1.6s",  dur:"1.9s" },
+                { cx:20,  cy:210, r:6,  anim:"cel3-twinkle-b", delay:"0.8s",  dur:"2.3s" },
+                { cx:8,   cy:112, r:5,  anim:"cel3-twinkle-c", delay:"0.3s",  dur:"2.1s" },
+                { cx:116, cy:8,   r:5,  anim:"cel3-twinkle-a", delay:"1.3s",  dur:"1.7s" },
+              ].map((s, i) => (
+                <g key={i} transform={`translate(${s.cx},${s.cy})`}
+                  style={{ animation:`${s.anim} ${s.dur} ease-in-out ${s.delay} infinite`,
+                    transformBox:"fill-box", transformOrigin:"center" }}>
+                  {/* 4-pointed star */}
+                  <path d={`M0,${-s.r} L${s.r*.28},${-s.r*.28} L${s.r},0 L${s.r*.28},${s.r*.28} L0,${s.r} L${-s.r*.28},${s.r*.28} L${-s.r},0 L${-s.r*.28},${-s.r*.28} Z`}
+                    fill="var(--color-forest-canopy)"/>
+                </g>
+              ))}
+            </svg>
+          </div>
+        ),
+      },
+    ];
+
+    const step = STEPS[tutorialStep - 1];
+    const isLast = tutorialStep === 3;
+
+    return (
+      <div className="app">
+        <div className="mobile-frame" style={{ display:"flex", flexDirection:"column", minHeight:"100vh" }}>
+          {/* Status bar */}
+          <div className="statusbar">
+            <span>{String(today.getHours()).padStart(2,"0")}:{String(today.getMinutes()).padStart(2,"0")}</span>
+            <div className="icons"><span className="dot"/><span className="dot"/><span className="pill"/></div>
+          </div>
+
+          {/* Back + step label */}
+          <div style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 20px 4px" }}>
+            <button
+              onClick={() => tutorialStep > 1 ? setTutorialStep(s => s - 1) : setScreen("workout")}
+              style={{ background:"none", border:"none", padding:0, cursor:"pointer", display:"flex", alignItems:"center", gap:6, color:"var(--color-ink)" }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="15 18 9 12 15 6"/>
+              </svg>
+              <span style={{ fontSize:14, fontWeight:500 }}>Back</span>
+            </button>
+          </div>
+
+          {/* Step eyebrow */}
+          <div style={{ padding:"0 20px 0" }}>
+            <p style={{
+              fontSize:10, fontWeight:700, letterSpacing:".12em", textTransform:"uppercase",
+              color:"var(--color-muted-ash)", margin:0, display:"flex", alignItems:"center", gap:6,
+            }}>
+              <span style={{ display:"inline-block", width:7, height:7, borderRadius:"50%", background:"var(--color-forest-canopy)" }}/>
+              {step.eyebrow}
+            </p>
+          </div>
+
+          {/* Illustration */}
+          <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", padding:"24px 0 8px" }}>
+            {step.illustration}
+          </div>
+
+          {/* Copy */}
+          <div style={{ padding:"0 28px 28px" }}>
+            <h2 style={{ fontSize:28, fontWeight:700, color:"var(--color-ink)", lineHeight:1.15, margin:"0 0 10px", letterSpacing:"-.02em" }}>
+              {step.heading}
+            </h2>
+            <p style={{ fontSize:15, color:"var(--color-muted-ash)", lineHeight:1.65, margin:0 }}>
+              {step.body}
+            </p>
+          </div>
+
+          {/* Progress dots */}
+          <div style={{ display:"flex", gap:8, justifyContent:"center", marginBottom:20 }}>
+            {[1,2,3].map(i => (
+              <div key={i} style={{
+                height:6, borderRadius:4, transition:"width .3s, background .3s",
+                width: i === tutorialStep ? 28 : 7,
+                background: i === tutorialStep ? "var(--color-forest-canopy)" : "var(--color-stone)",
+              }}/>
+            ))}
+          </div>
+
+          {/* CTA */}
+          <div style={{ padding:"0 20px calc(24px + env(safe-area-inset-bottom, 0px))" }}>
+            <button
+              onClick={() => {
+                if (isLast) { setScreen("camera"); }
+                else { setTutorialStep(s => s + 1); }
+              }}
+              style={{
+                width:"100%", height:54, background:"var(--color-forest-canopy)",
+                border:"none", borderRadius:16, fontSize:17, fontWeight:700,
+                color:"var(--color-ink)", cursor:"pointer",
+              }}
+            >
+              {step.cta}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ─── CAMERA: fullscreen MediaPipe ────────────────────── */
   return (
     <>
       <style>{`
@@ -2232,14 +2637,14 @@ export default function Page() {
 
       <div style={{ position:"fixed", inset:0, zIndex:500, background:"#050605", overflow:"hidden" }}>
 
-        {/* Live camera — mirrored */}
+        {/* Live camera: mirrored */}
         <video ref={videoRef} autoPlay playsInline muted style={{
           position:"absolute", inset:0, width:"100%", height:"100%",
           objectFit:"cover", transform:"scaleX(-1)",
           display: permState === "granted" ? "block" : "none",
         }}/>
 
-        {/* Skeleton + form-line canvas — same mirror as video */}
+        {/* Skeleton + form-line canvas: same mirror as video */}
         <canvas ref={canvasRef} style={{
           position:"absolute", inset:0, width:"100%", height:"100%",
           transform:"scaleX(-1)", pointerEvents:"none",
@@ -2325,7 +2730,7 @@ export default function Page() {
         {permState === "granted" && !mpLoading && (
           <div style={{ position:"absolute", inset:0, animation:"fadein .4s ease" }}>
 
-            {/* Corner vignette — red = bad form, green = moving correctly */}
+            {/* Corner vignette: red = bad form, green = moving correctly */}
             <div style={{
               position:"absolute", inset:0, pointerEvents:"none",
               transition:"background .35s ease",
@@ -2355,7 +2760,7 @@ export default function Page() {
                   color:"rgba(255,255,255,.5)", background:"rgba(255,255,255,.08)",
                   padding:"4px 14px", borderRadius:8, marginBottom:12,
                   border:"1px solid rgba(255,255,255,.12)",
-                }}>Correct Form — Lateral Raises</span>
+                }}>Correct Form: Lateral Raises</span>
 
                 <svg viewBox="0 0 180 200" width="200" height="222" fill="none" xmlns="http://www.w3.org/2000/svg">
                   {/* Bench */}
@@ -2382,14 +2787,14 @@ export default function Page() {
                   <circle cx="63" cy="60" r="12" fill="rgba(255,140,40,.25)"/>
                   <circle cx="117" cy="60" r="12" fill="rgba(255,140,40,.25)"/>
 
-                  {/* LEFT UPPER ARM — amber deltoid, sweeps from hanging to horizontal */}
+                  {/* LEFT UPPER ARM: amber deltoid, sweeps from hanging to horizontal */}
                   <line x1="63" y1="60" stroke="rgba(230,130,30,.9)" strokeWidth="5" strokeLinecap="round">
                     <animate attributeName="x2" values="51;28;51" dur="2.6s" repeatCount="indefinite" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
                     <animate attributeName="y2" values="88;60;88" dur="2.6s" repeatCount="indefinite" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
                   </line>
                   <circle cx="63" cy="60" r="5.5" fill="rgba(230,130,30,.9)"/>
 
-                  {/* LEFT FOREARM — extends outward at the same height */}
+                  {/* LEFT FOREARM: extends outward at the same height */}
                   <line stroke="rgba(255,255,255,.82)" strokeWidth="4" strokeLinecap="round">
                     <animate attributeName="x1" values="51;28;51" dur="2.6s" repeatCount="indefinite" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
                     <animate attributeName="y1" values="88;60;88" dur="2.6s" repeatCount="indefinite" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
@@ -2411,7 +2816,7 @@ export default function Page() {
                     <rect x="8"  y="-6" width="7" height="12" rx="2" fill="rgba(160,160,160,.85)"/>
                   </g>
 
-                  {/* RIGHT UPPER ARM — amber deltoid (mirror) */}
+                  {/* RIGHT UPPER ARM: amber deltoid (mirror) */}
                   <line x1="117" y1="60" stroke="rgba(230,130,30,.9)" strokeWidth="5" strokeLinecap="round">
                     <animate attributeName="x2" values="129;152;129" dur="2.6s" repeatCount="indefinite" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
                     <animate attributeName="y2" values="88;60;88"    dur="2.6s" repeatCount="indefinite" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"/>
@@ -2484,9 +2889,9 @@ export default function Page() {
                   <line x1="88" y1="46" x2="98" y2="80" stroke="rgba(255,255,255,.25)" strokeWidth="2" strokeLinecap="round"/>
                   {/* Hips */}
                   <line x1="40" y1="95" x2="80" y2="95" stroke="rgba(255,255,255,.3)" strokeWidth="2.5" strokeLinecap="round"/>
-                  {/* QUAD HIGHLIGHT — left */}
+                  {/* QUAD HIGHLIGHT: left */}
                   <rect x="28" y="95" width="18" height="52" rx="9" fill="rgba(209,244,125,.65)"/>
-                  {/* QUAD HIGHLIGHT — right */}
+                  {/* QUAD HIGHLIGHT: right */}
                   <rect x="74" y="95" width="18" height="52" rx="9" fill="rgba(209,244,125,.65)"/>
                   {/* Shins */}
                   <line x1="37" y1="147" x2="32" y2="192" stroke="rgba(255,255,255,.25)" strokeWidth="2" strokeLinecap="round"/>
@@ -2603,7 +3008,7 @@ export default function Page() {
               </div>
             </div>
 
-            {/* Rep counter — auto for pose exercises, manual for leg press */}
+            {/* Rep counter: auto for pose exercises, manual for leg press */}
             <div style={{ position:"absolute", inset:0, display:"flex", flexDirection:"column",
               alignItems:"center", justifyContent:"center", gap:18,
               pointerEvents: ex.type === "legpress" ? "auto" : "none" }}>
