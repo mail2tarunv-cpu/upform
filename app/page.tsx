@@ -56,9 +56,9 @@ const DEFAULT_DAYS: Record<number, number[]> = {
 };
 
 const MODES = [
-  { id: "manual",  icon: "✏️", label: "Manual Log",           sub: "Log sets yourself" },
-  { id: "phone",   icon: "📱", label: "Check-in Phone",        sub: "Use your camera" },
-  { id: "glasses", icon: "🥽", label: "Check-in Meta Glasses", sub: "Hands-free tracking" },
+  { id: "phone",   icon: "📱", label: "Phone Camera",      sub: "Live body tracking",                       available: true  },
+  { id: "manual",  icon: "✏️", label: "Manual Log",        sub: "In development",                          available: false },
+  { id: "glasses", icon: "🥽", label: "Quest Mixed Reality", sub: "In development · companion phone needed", available: false },
 ];
 
 type Screen     = "home" | "routines" | "profile" | "workout" | "tutorial" | "camera";
@@ -134,7 +134,7 @@ export default function Page() {
   const [weightUnit,   setWeightUnit]   = useState<"kg"|"lbs">("kg");
   const [daysFullFlash, setDaysFullFlash] = useState(false);
   const [screen,       setScreen]       = useState<Screen>("home");
-  const [mode,         setMode]         = useState("glasses");
+  const [mode,         setMode]         = useState("phone");
   const [tutorialStep, setTutorialStep] = useState(1);
   const [permState,  setPermState]  = useState<PermState>("idle");
   const [exIdx,      setExIdx]      = useState(0);
@@ -274,15 +274,21 @@ export default function Page() {
   }, [permState]);
 
   const requestCamera = useCallback(async () => {
+    const video = { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } };
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: true,   // request mic at the same time so one permission prompt covers both
-      });
+      // Audio is optional: a denied microphone must not block pose tracking.
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video, audio: true });
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
+      }
       streamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
       setPermState("granted");
-    } catch { setPermState("denied"); }
+    } catch {
+      setPermState("denied");
+    }
   }, []);
 
   useEffect(() => { if (screen !== "camera") stopCamera(); }, [screen, stopCamera]);
@@ -448,7 +454,8 @@ export default function Page() {
   // Start voice recognition when camera is live; stop on exit
   useEffect(() => {
     if (screen === "camera" && permState === "granted") {
-      startVoiceRecognition();
+      // Only start voice controls if the user allowed an audio track.
+      if (streamRef.current?.getAudioTracks().length) startVoiceRecognition();
     } else {
       stopVoiceRecognition();
     }
@@ -2277,9 +2284,9 @@ export default function Page() {
             {MODES.map(m => {
               const isActive = mode === m.id;
               return (
-                <button key={m.id} onClick={() => setMode(m.id)} style={{
+                <button key={m.id} disabled={!m.available} onClick={() => setMode(m.id)} style={{
                   display:"flex", alignItems:"center", gap:12, padding:"12px 16px",
-                  borderRadius:16, cursor:"pointer", textAlign:"left", transition:".15s",
+                  borderRadius:16, cursor:m.available?"pointer":"not-allowed", opacity:m.available?1:0.58, textAlign:"left", transition:".15s",
                   background: isActive ? "rgba(209,244,125,.3)" : "var(--color-parchment)",
                   border: isActive ? "1.5px solid var(--color-forest-canopy)" : "1px solid var(--color-stone)",
                 }}>
@@ -2647,7 +2654,7 @@ export default function Page() {
         {/* Skeleton + form-line canvas: same mirror as video */}
         <canvas ref={canvasRef} style={{
           position:"absolute", inset:0, width:"100%", height:"100%",
-          transform:"scaleX(-1)", pointerEvents:"none",
+          transform:"scaleX(-1)", objectFit:"cover", pointerEvents:"none",
           display: permState === "granted" && !mpLoading ? "block" : "none",
         }}/>
 
@@ -2672,17 +2679,17 @@ export default function Page() {
                   border:"1px solid rgba(255,255,255,.18)", display:"grid", placeItems:"center", fontSize:24 }}>🎤</div>
               </div>
               <h2 style={{ fontSize:20, fontWeight:700, color:"white", marginBottom:10, lineHeight:1.2 }}>
-                Camera & Microphone
+                Camera access
               </h2>
               <p style={{ fontSize:13, color:"rgba(255,255,255,.55)", lineHeight:1.6, marginBottom:28 }}>
                 Camera tracks your form in real time. Microphone lets you say{" "}
                 <strong style={{ color:"rgba(255,255,255,.85)" }}>"Skip"</strong>{" "}
-                to move to the next set hands-free.
+                to move to the next set hands-free. Voice control is optional.
               </p>
               <button onClick={requestCamera} style={{ width:"100%", height:50, borderRadius:14,
                 background:"white", color:"#1a1a1a", border:"none",
                 fontWeight:700, fontSize:15, cursor:"pointer", marginBottom:12 }}>
-                Allow Camera & Mic
+                Start camera
               </button>
               <button onClick={exitCamera} style={{ width:"100%", height:40, borderRadius:14,
                 background:"transparent", color:"rgba(255,255,255,.45)",
