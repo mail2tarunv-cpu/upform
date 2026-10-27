@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { ManualWorkout, WorkoutSummary } from "./components/WorkoutFlow";
+import { createSession, persistSession, readSessions, workoutStreak, type LoggedSet, type WorkoutSession } from "../lib/session";
 
 const DAYS   = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -56,12 +58,11 @@ const DEFAULT_DAYS: Record<number, number[]> = {
 };
 
 const MODES = [
-  { id: "manual",  icon: "✏️", label: "Manual Log",           sub: "Log sets yourself" },
-  { id: "phone",   icon: "📱", label: "Check-in Phone",        sub: "Use your camera" },
-  { id: "glasses", icon: "🥽", label: "Check-in Meta Glasses", sub: "Hands-free tracking" },
+  { id: "phone",   icon: "📱", label: "Phone camera", sub: "Automatic reps for supported movements" },
+  { id: "manual",  icon: "✏️", label: "Manual log", sub: "Track every set without a camera" },
 ];
 
-type Screen     = "home" | "routines" | "profile" | "workout" | "tutorial" | "camera";
+type Screen     = "home" | "routines" | "profile" | "workout" | "tutorial" | "camera" | "manual" | "summary";
 type PermState  = "idle" | "granted" | "denied";
 type RepFlash   = "good" | "bad" | null;
 type FormStatus = "good" | "bad" | "neutral";
@@ -134,7 +135,10 @@ export default function Page() {
   const [weightUnit,   setWeightUnit]   = useState<"kg"|"lbs">("kg");
   const [daysFullFlash, setDaysFullFlash] = useState(false);
   const [screen,       setScreen]       = useState<Screen>("home");
-  const [mode,         setMode]         = useState("glasses");
+  const [mode,         setMode]         = useState("phone");
+  const [completedSession, setCompletedSession] = useState<WorkoutSession | null>(null);
+  const sessionSetsRef = useRef<LoggedSet[]>([]);
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [tutorialStep, setTutorialStep] = useState(1);
   const [permState,  setPermState]  = useState<PermState>("idle");
   const [exIdx,      setExIdx]      = useState(0);
@@ -220,7 +224,7 @@ export default function Page() {
 
   // immediate=true bypasses the between-text gap (used for rep counts + urgent form cues)
   const speak = useCallback((text: string, immediate = false) => {
-    if (mutedRef.current || !("speechSynthesis" in window)) return;
+    if (mutedRef.current || !voiceEnabled || !("speechSynthesis" in window)) return;
     const now = Date.now();
     const { text: last, time: lastTime } = lastSpeakRef.current;
     if (text === last && now - lastTime < 4000) return;           // same phrase: 4 s cooldown
@@ -230,7 +234,7 @@ export default function Page() {
     const u = new SpeechSynthesisUtterance(text);
     u.rate = 1.05; u.pitch = 1; u.volume = 1;
     window.speechSynthesis.speak(u);
-  }, []);
+  }, [voiceEnabled]);
 
   const resetRep = useCallback(() => {
     repStateRef.current = {
@@ -255,6 +259,14 @@ export default function Page() {
     setNoBody(false); setCornerStatus("neutral");
   }, []);
 
+  const saveCompletedWorkout = useCallback((session: WorkoutSession) => {
+    const updated = persistSession(session);
+    setCompletedSession(session);
+    setWorkoutCount(updated.length);
+    setStreak(workoutStreak(updated));
+    setScreen("summary");
+  }, []);
+
   const exitCamera = useCallback(() => {
     stopCamera();
     stopVoiceRecognition();
@@ -277,7 +289,7 @@ export default function Page() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: true,   // request mic at the same time so one permission prompt covers both
+        audio: false, // camera works independently of speech permissions
       });
       streamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
@@ -304,6 +316,11 @@ export default function Page() {
     if (savedCount) setWorkoutCount(parseInt(savedCount));
     const savedStreak = localStorage.getItem("upform_streak");
     if (savedStreak) setStreak(parseInt(savedStreak));
+    const savedSessions = readSessions();
+    if (savedSessions.length) {
+      setWorkoutCount(savedSessions.length);
+      setStreak(workoutStreak(savedSessions));
+    }
   }, []);
 
   // Keep refs in sync so async callbacks (intervals) read fresh values
@@ -327,10 +344,12 @@ export default function Page() {
       setExIdx(i => i + 1);
       setCurrentSet(1);
     } else {
-      speak("Workout complete! Great job today!", true);
-      exitCamera();
+      const session = createSession(activeWorkoutRef.current.name, "camera", sessionSetsRef.current);
+      stopCamera();
+      stopVoiceRecognition();
+      saveCompletedWorkout(session);
     }
-  }, [speak, resetRep, exitCamera]);
+  }, [speak, resetRep, exitCamera, stopCamera, stopVoiceRecognition, saveCompletedWorkout]);
 
   const cancelVoiceCmd = useCallback(() => {
     if (voiceCmdTimerRef.current) { clearTimeout(voiceCmdTimerRef.current); voiceCmdTimerRef.current = null; }
@@ -447,20 +466,22 @@ export default function Page() {
 
   // Start voice recognition when camera is live; stop on exit
   useEffect(() => {
-    if (screen === "camera" && permState === "granted") {
+    if (screen === "camera" && permState === "granted" && voiceEnabled) {
       startVoiceRecognition();
     } else {
       stopVoiceRecognition();
     }
     return () => stopVoiceRecognition();
-  }, [screen, permState, startVoiceRecognition, stopVoiceRecognition]);
+  }, [screen, permState, voiceEnabled, startVoiceRecognition, stopVoiceRecognition]);
 
   // Trigger rest overlay once reps hit the target
   useEffect(() => {
     if (reps < ex.reps || restActive || screen !== "camera" || permState !== "granted") return;
     const t = setTimeout(() => {
+      const loggedReps = ex.type === "legpress" ? reps : repStateRef.current.count;
+      sessionSetsRef.current.push({ exercise: ex.name, set: currentSetRef.current, reps: loggedReps, target: ex.reps, flaggedReps: repStateRef.current.badReps });
       setLastSetStats({
-        good:   repStateRef.current.count,
+        good:   loggedReps,
         bad:    repStateRef.current.badReps,
         target: ex.reps,
       });
@@ -1155,11 +1176,19 @@ export default function Page() {
   const startRoutine = useCallback((workout: typeof WORKOUTS[0], from: Screen = "home") => {
     prevScreenRef.current = from;
     activeWorkoutRef.current = workout;
+    sessionSetsRef.current = [];
     setScreen("workout");
   }, []);
 
   /* ─── ONBOARDING ───────────────────────────────────────── */
   if (onboarded === null) return null;
+
+  if (screen === "summary" && completedSession) {
+    return <WorkoutSummary session={completedSession} onDone={() => { setCompletedSession(null); setScreen("home"); }} />;
+  }
+  if (screen === "manual") {
+    return <ManualWorkout workout={activeWorkoutRef.current} onFinish={saveCompletedWorkout} onExit={() => setScreen("workout")} />;
+  }
 
   if (!onboarded) {
     const finish = () => {
@@ -2300,7 +2329,7 @@ export default function Page() {
 
           <div className="sticky-cta">
             <button className="btn dark" style={{ width:"100%", fontSize:16 }}
-              onClick={() => { setTutorialStep(1); setScreen("tutorial"); }}>
+              onClick={() => { sessionSetsRef.current = []; setReps(0); setExIdx(0); setCurrentSet(1); if (mode === "manual") setScreen("manual"); else { setTutorialStep(1); setScreen("tutorial"); } }}>
               Start
             </button>
           </div>
@@ -2434,7 +2463,7 @@ export default function Page() {
       {
         eyebrow: "VOICE CUES · 2 OF 3",
         heading: "Your coach talks to you",
-        body: "You\u2019ll hear audio cues when your form slips. Say \u201cnext\u201d to move to the next set, or \u201cstop\u201d to end the workout.",
+        body: "Optional voice cues describe detected movement. You can use the on-screen controls without a microphone.",
         cta: "Next",
         illustration: (
           <svg viewBox="0 0 240 218" width="240" height="218" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2476,8 +2505,8 @@ export default function Page() {
       },
       {
         eyebrow: "YOU'RE ALL SET · 3 OF 3",
-        heading: "Put on your glasses and go",
-        body: "Wear your Meta glasses, step into position, and the session starts automatically. Your coach is with you the whole way.",
+        heading: "Set up your phone and go",
+        body: "Prop your phone securely, step into view, and allow your camera. UpForm will estimate reps on supported exercises.",
         cta: "Start workout",
         illustration: (
           <div style={{ position:"relative", width:240, height:240, display:"flex", alignItems:"center", justifyContent:"center" }}>
@@ -2672,17 +2701,17 @@ export default function Page() {
                   border:"1px solid rgba(255,255,255,.18)", display:"grid", placeItems:"center", fontSize:24 }}>🎤</div>
               </div>
               <h2 style={{ fontSize:20, fontWeight:700, color:"white", marginBottom:10, lineHeight:1.2 }}>
-                Camera & Microphone
+                Start your camera
               </h2>
               <p style={{ fontSize:13, color:"rgba(255,255,255,.55)", lineHeight:1.6, marginBottom:28 }}>
-                Camera tracks your form in real time. Microphone lets you say{" "}
+                Your camera estimates body positions on this device. Voice commands are optional.{" "}
                 <strong style={{ color:"rgba(255,255,255,.85)" }}>"Skip"</strong>{" "}
                 to move to the next set hands-free.
               </p>
               <button onClick={requestCamera} style={{ width:"100%", height:50, borderRadius:14,
                 background:"white", color:"#1a1a1a", border:"none",
                 fontWeight:700, fontSize:15, cursor:"pointer", marginBottom:12 }}>
-                Allow Camera & Mic
+                Allow camera
               </button>
               <button onClick={exitCamera} style={{ width:"100%", height:40, borderRadius:14,
                 background:"transparent", color:"rgba(255,255,255,.45)",
@@ -2957,24 +2986,24 @@ export default function Page() {
               </div>
             )}
 
-            {/* REC + mute toggle */}
+            {/* Voice cues toggle — camera video is not recorded */}
             <div style={{ position:"absolute", top:18, left:"50%", transform:"translateX(-50%)",
               display:"flex", alignItems:"center", gap:10 }}>
               <div style={{ display:"flex", alignItems:"center", gap:6 }}>
                 <div style={{ width:7, height:7, borderRadius:"50%", background:"#f23",
                   animation:"pulsedot 1.2s ease-in-out infinite" }}/>
                 <span style={{ color:"rgba(255,255,255,.55)", fontSize:10,
-                  fontWeight:700, letterSpacing:".12em" }}>REC</span>
+                  fontWeight:700, letterSpacing:".12em" }}>LIVE</span>
               </div>
               <button
                 onClick={() => {
-                  const next = !muted;
-                  mutedRef.current = next;
-                  setMuted(next);
-                  if (next) window.speechSynthesis?.cancel();
-                  else speak("Voice on");
+                  const next = !voiceEnabled;
+                  setVoiceEnabled(next);
+                  mutedRef.current = !next;
+                  setMuted(!next);
+                  if (!next) window.speechSynthesis?.cancel();
                 }}
-                title={muted ? "Unmute voice" : "Mute voice"}
+                title={voiceEnabled ? "Turn off voice coaching" : "Turn on voice coaching"}
                 style={{
                   background:"rgba(0,0,0,.4)", backdropFilter:"blur(12px)",
                   border:"1px solid rgba(255,255,255,.18)", borderRadius:8,
@@ -2982,7 +3011,7 @@ export default function Page() {
                   cursor:"pointer", fontSize:15, lineHeight:1,
                   color: muted ? "rgba(255,255,255,.35)" : "white",
                 }}>
-                {muted ? "🔇" : "🔊"}
+                {voiceEnabled ? "🔊" : "🔇"}
               </button>
             </div>
 
@@ -3129,7 +3158,7 @@ export default function Page() {
               }}>
                 <span style={{ fontSize:13 }}>🎤</span>
                 <span style={{ fontSize:11, color:"rgba(255,255,255,.55)", fontWeight:600 }}>
-                  "skip" · "pause" · "end workout"
+                  {voiceEnabled ? '"skip" · "pause" · "end workout"' : "Voice optional"}
                 </span>
               </div>
             </div>
