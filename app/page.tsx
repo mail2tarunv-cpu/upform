@@ -271,6 +271,7 @@ export default function Page() {
     stopCamera();
     stopVoiceRecognition();
     if (restIntervalRef.current) { clearInterval(restIntervalRef.current); restIntervalRef.current = null; }
+    window.speechSynthesis?.cancel();
     restActiveRef.current = false;
     setRestActive(false);
     setPermState("idle"); setMpLoading(true); setExIdx(0); setCurrentSet(1);
@@ -312,15 +313,9 @@ export default function Page() {
     if (savedDays) setSelectedDays(JSON.parse(savedDays));
     const savedDPW = localStorage.getItem("upform_days_per_week");
     if (savedDPW) setDaysPerWeek(parseInt(savedDPW));
-    const savedCount = localStorage.getItem("upform_workout_count");
-    if (savedCount) setWorkoutCount(parseInt(savedCount));
-    const savedStreak = localStorage.getItem("upform_streak");
-    if (savedStreak) setStreak(parseInt(savedStreak));
     const savedSessions = readSessions();
-    if (savedSessions.length) {
-      setWorkoutCount(savedSessions.length);
-      setStreak(workoutStreak(savedSessions));
-    }
+    setWorkoutCount(savedSessions.length);
+    setStreak(workoutStreak(savedSessions));
   }, []);
 
   // Keep refs in sync so async callbacks (intervals) read fresh values
@@ -2704,9 +2699,7 @@ export default function Page() {
                 Start your camera
               </h2>
               <p style={{ fontSize:13, color:"rgba(255,255,255,.55)", lineHeight:1.6, marginBottom:28 }}>
-                Your camera estimates body positions on this device. Voice commands are optional.{" "}
-                <strong style={{ color:"rgba(255,255,255,.85)" }}>"Skip"</strong>{" "}
-                to move to the next set hands-free.
+                Your camera estimates body positions in real time. No video is saved. You can turn on optional voice coaching after starting.
               </p>
               <button onClick={requestCamera} style={{ width:"100%", height:50, borderRadius:14,
                 background:"white", color:"#1a1a1a", border:"none",
