@@ -1459,3 +1459,163 @@ canvas{z-index:2}
   .coach-grid{grid-template-columns:1fr}
   .hud.mid-left,.hud.mid-right{display:none}
 }
+
+
+/* ─── UpForm UI refinement · Apple restraint / Hevy workout clarity ─── */
+:root {
+  --color-parchment: #fafbf8;
+  --color-ink: #171b17;
+  --color-forest-canopy: #c9ed77;
+  --color-pale-lavender: #f1f3ee;
+  --color-stone: #e5e9e2;
+  --color-muted-ash: #626d62;
+  --shadow: none;
+  --radius: 20px;
+  --ui-surface: #ffffff;
+  --ui-background: #fafbf8;
+  --ui-border: #e4e8e2;
+  --ui-dark: #192019;
+}
+html, body {
+  background: #f1f3ef;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Figtree", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+button { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, a:focus-visible, input:focus-visible {
+  outline: 3px solid #779e37;
+  outline-offset: 3px;
+}
+.app, .mobile-frame { background: var(--ui-background); }
+.mobile-frame {
+  max-width: 430px;
+  min-height: 100dvh;
+  box-shadow: 0 0 36px rgba(22,34,23,.05);
+}
+main { padding: 22px 24px 34px; }
+h1 { letter-spacing: -.045em; font-weight: 720; }
+h2 { letter-spacing: -.035em; }
+h3 { line-height: 1.24; }
+p { color: var(--color-muted-ash); }
+.eyebrow { letter-spacing: .1em; margin-bottom: 10px; }
+.eyebrow:before { display: none; }
+.card {
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-radius: 20px;
+  box-shadow: none;
+}
+.pad { padding: 20px; }
+.row { border-color: var(--ui-border); padding: 14px 0; }
+.badge { border: 1px solid var(--ui-border); background: #f6f7f3; padding: 5px 10px; font-size: 11px; }
+.btn { min-height: 50px; border-radius: 14px; font-size: 15px; font-weight: 650; }
+.btn.primary, .btn.dark { background: var(--ui-dark); color: white; border-radius: 14px; }
+.btn.secondary { background: #eff1ec; color: var(--ui-dark); border-color: #eff1ec; }
+.btn.ghost { border-color: var(--ui-border); border-radius: 14px; }
+.btn.small { min-height: 44px; font-size: 13px; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.sticky-cta { padding: 12px 0 0; background: linear-gradient(to top, var(--ui-background) 75%, transparent); }
+.metric { background: white; border: 1px solid var(--ui-border); border-radius: 16px; box-shadow: none; }
+.metric strong { font-size: 23px; letter-spacing: -.04em; }
+.metric span { font-size: 11px; letter-spacing: .03em; }
+.chip.active { color: var(--ui-dark); }
+.hero h2, .hero h3 { color: var(--ui-dark); }
+.hero-copy p { color: #384632; }
+.home-heading { margin-bottom: 22px; }
+.home-heading .overline { color: var(--color-muted-ash); font-size: 13px; font-weight: 500; margin-bottom: 6px; }
+.home-heading h1 { color: var(--ui-dark); font-size: 35px; font-weight: 750; letter-spacing: -.048em; }
+.home-heading p { margin-top: 8px; font-size: 14px; }
+.home-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+.home-stat {
+  background: white;
+  border: 1px solid var(--ui-border);
+  border-radius: 17px;
+  padding: 15px 17px;
+}
+.home-stat strong { display: block; font-size: 25px; font-weight: 700; letter-spacing: -.05em; color: var(--ui-dark); }
+.home-stat span { display: block; margin-top: 3px; font-size: 12px; color: var(--color-muted-ash); }
+.week-picker { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-bottom: 24px; }
+.week-day {
+  min-width: 0;
+  min-height: 62px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ui-dark);
+  border-radius: 13px;
+  padding: 7px 0;
+  cursor: pointer;
+}
+.week-day span { font-size: 11px; font-weight: 600; color: var(--color-muted-ash); }
+.week-day strong { font-size: 17px; font-weight: 700; }
+.week-day.selected { background: var(--ui-dark); border-color: var(--ui-dark); color: white; }
+.week-day.selected span { color: rgba(255,255,255,.75); }
+.week-day.has-workout:not(.selected):after { content: ""; width: 5px; height: 5px; border-radius: 50%; background: #81a646; position: absolute; transform: translateY(29px); }
+.week-day { position: relative; }
+.workout-feature-card h3 { font-size: 24px; font-weight: 700; letter-spacing: -.035em; margin-bottom: 12px !important; }
+.workout-feature-card .row:last-child { padding-bottom: 0; }
+.workout-mode-label { font-size: 13px; font-weight: 700; margin: 20px 0 10px; color: var(--ui-dark); }
+.workout-preview-toggle {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 48px;
+  padding: 0 14px;
+  width: 100%;
+  background: white;
+  color: var(--ui-dark);
+  border: 1px solid var(--ui-border);
+  border-radius: 14px;
+  font-size: 13px;
+  font-weight: 650;
+  margin: 12px 0 8px;
+}
+.workout-demo { margin-bottom: 12px; }
+.upform-nav {
+  display: grid;
+  grid-template-columns: repeat(3,minmax(0,1fr));
+  gap: 4px;
+  min-height: 72px;
+  padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--ui-border);
+  background: rgba(250,251,248,.97);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  position: sticky;
+  bottom: 0;
+  z-index: 110;
+}
+.upform-nav-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  justify-content: center;
+  align-items: center;
+  min-width: 0;
+  min-height: 52px;
+  border: none;
+  border-radius: 12px;
+  color: var(--color-muted-ash);
+  background: transparent;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.upform-nav-tab.active { color: var(--ui-dark); }
+.upform-nav-tab.active svg { color: #64832b; }
+.upform-nav-tab .nav-icon { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; }
+.upform-nav-tab span { white-space: nowrap; }
+.routine-card { margin-bottom: 2px; }
+.routine-card .btn { width: 100%; }
+@media (prefers-reduced-motion: reduce) {
+  .app *, .app *::before, .app *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
