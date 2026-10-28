@@ -25,6 +25,9 @@ export function ManualWorkout({
   const exercise = workout.exercises[exerciseIndex];
   const totalSets = workout.exercises.reduce((sum, item) => sum + item.sets, 0);
   const progress = Math.round(100 * completed.length / Math.max(totalSets, 1));
+  const activeCompleted = completed.filter((item) => item.exercise === exercise.name);
+  const lastSet = setIndex >= exercise.sets;
+  const lastExercise = exerciseIndex >= workout.exercises.length - 1;
 
   function logSet() {
     if (reps < 1) return;
@@ -35,8 +38,6 @@ export function ManualWorkout({
       target: exercise.reps,
       flaggedReps: 0,
     }];
-    const lastSet = setIndex >= exercise.sets;
-    const lastExercise = exerciseIndex >= workout.exercises.length - 1;
     if (lastSet && lastExercise) {
       onFinish(createSession(workout.name, "manual", next));
       return;
@@ -55,55 +56,83 @@ export function ManualWorkout({
     <div className={styles.shell}>
       <div className={styles.phone}>
         <header className={styles.top}>
-          <button className={styles.back} onClick={() => setConfirmExit(true)} aria-label="Exit workout">←</button>
+          <button className={styles.back} onClick={() => setConfirmExit(true)} aria-label="Leave workout">‹</button>
           <span className={styles.brand}>upform<span className={styles.brandDot}>.</span></span>
-          <span className={styles.mode}>MANUAL LOG</span>
+          <span className={styles.mode}>MANUAL</span>
         </header>
 
-        <div className={styles.body}>
-          <p className={styles.eyebrow}>YOUR SESSION</p>
+        <main className={styles.body}>
+          <div className={styles.overline}>IN PROGRESS</div>
           <h1 className={styles.title}>{workout.name}</h1>
-          <div className={styles.track}><div style={{ width: progress + "%" }} /></div>
-          <div className={styles.trackMeta}>
-            <span>{completed.length} of {totalSets} sets logged</span>
-            <span>{progress}%</span>
+          <div className={styles.progressMeta}>
+            <span>{completed.length} of {totalSets} sets complete</span>
+            <strong>{progress}%</strong>
+          </div>
+          <div className={styles.track} role="progressbar" aria-label="Workout progress" aria-valuenow={completed.length} aria-valuemin={0} aria-valuemax={totalSets}>
+            <div style={{ width: progress + "%" }} />
           </div>
 
-          <section className={styles.exerciseCard} aria-label="Current exercise">
-            <div className={styles.exerciseTop}>
-              <span>EXERCISE {exerciseIndex + 1} / {workout.exercises.length}</span>
-              <span>SET {setIndex} / {exercise.sets}</span>
-            </div>
-            <h2>{exercise.name}</h2>
-            <p>Target: {exercise.reps} controlled reps</p>
-            <div className={styles.counterRow}>
-              <button onClick={() => setReps((value) => Math.max(0, value - 1))} aria-label="Remove one rep">−</button>
-              <div className={styles.counter} aria-live="polite" aria-atomic="true">
-                <span>{reps}</span><small>REPS</small>
-              </div>
-              <button onClick={() => setReps((value) => Math.min(999, value + 1))} aria-label="Add one rep">+</button>
-            </div>
-            <button className={styles.target} onClick={() => setReps(exercise.reps)}>
-              Use target · {exercise.reps} reps
-            </button>
+          <section className={styles.exerciseOverview} aria-label="Workout exercises">
+            {workout.exercises.map((item, index) => {
+              const done = completed.filter((set) => set.exercise === item.name).length;
+              const active = index === exerciseIndex;
+              return (
+                <div className={active ? styles.overviewActive : styles.overviewRow} key={index}>
+                  <span className={styles.exerciseIndex}>{String(index + 1).padStart(2, "0")}</span>
+                  <div className={styles.overviewName}>
+                    <strong>{item.name}</strong>
+                    <small>{item.sets} sets · {item.reps} reps</small>
+                  </div>
+                  <span className={styles.overviewProgress}>{done === item.sets ? "✓" : active ? "NOW" : done + "/" + item.sets}</span>
+                </div>
+              );
+            })}
           </section>
 
-          <p className={styles.note}>No camera needed. Log what you actually completed — you can use UpForm even when tracking isn’t available.</p>
-        </div>
+          <section className={styles.activeCard} aria-label="Log current set">
+            <div className={styles.setTopline}>
+              <span>SET {setIndex} OF {exercise.sets}</span>
+              <span>{exercise.reps} REP TARGET</span>
+            </div>
+            <h2>{exercise.name}</h2>
+            <div className={styles.counterLabel}>Repetitions completed</div>
+            <div className={styles.counterRow}>
+              <button type="button" onClick={() => setReps((value) => Math.max(0, value - 1))} aria-label="Remove one rep">−</button>
+              <div className={styles.counter}>
+                <input aria-label="Repetitions completed" type="number" min={0} max={999} inputMode="numeric"
+                  value={reps} onChange={(event) => {
+                    const value = Number(event.target.value);
+                    if (Number.isFinite(value)) setReps(Math.min(999, Math.max(0, Math.trunc(value))));
+                  }} />
+              </div>
+              <button type="button" onClick={() => setReps((value) => Math.min(999, value + 1))} aria-label="Add one rep">+</button>
+            </div>
+            <button type="button" className={styles.target} onClick={() => setReps(exercise.reps)}>
+              Set to target ({exercise.reps})
+            </button>
+            <div className={styles.setIndicators} aria-label="Set completion">
+              {Array.from({ length: exercise.sets }, (_, index) => (
+                <span key={index} className={index < activeCompleted.length ? styles.setDone : index === setIndex - 1 ? styles.setCurrent : styles.setPending}>
+                  {index < activeCompleted.length ? "✓" : index + 1}
+                </span>
+              ))}
+            </div>
+          </section>
+          <p className={styles.note}>Log what you actually completed. Camera tracking is optional.</p>
+        </main>
 
-        <div className={styles.footer}>
+        <footer className={styles.footer}>
           <button className={styles.primary} onClick={logSet} disabled={reps === 0}>
-            {exerciseIndex === workout.exercises.length - 1 && setIndex === exercise.sets
-              ? "Finish & save workout" : "Save set & continue"}
-            <span>→</span>
+            {lastSet && lastExercise ? "Finish workout" : "Complete set"}
+            <span aria-hidden="true">→</span>
           </button>
-        </div>
+        </footer>
 
         {confirmExit && (
           <div className={styles.modalBackdrop}>
-            <div className={styles.modal} role="dialog" aria-modal="true" aria-label="Discard workout">
-              <h2>Leave this workout?</h2>
-              <p>Your unfinished manual sets haven’t been saved.</p>
+            <div className={styles.modal} role="dialog" aria-modal="true" aria-label="Leave workout">
+              <h2>Leave workout?</h2>
+              <p>Your unfinished manual sets have not been saved.</p>
               <button className={styles.primary} onClick={() => setConfirmExit(false)}>Keep training</button>
               <button className={styles.textButton} onClick={onExit}>Discard workout</button>
             </div>
@@ -123,25 +152,26 @@ export function WorkoutSummary({
 }) {
   const totals = sessionTotals(session);
   const exercises = Array.from(new Set(session.sets.map((item) => item.exercise)));
-
   return (
     <div className={styles.shell}>
       <div className={styles.phone}>
         <header className={styles.top}>
           <span className={styles.brand}>upform<span className={styles.brandDot}>.</span></span>
-          <span className={styles.mode}>SESSION SAVED</span>
+          <span className={styles.mode}>COMPLETED</span>
         </header>
         <main className={styles.body}>
           <div className={styles.completeIcon} aria-hidden="true">✓</div>
-          <p className={styles.eyebrow}>NICE WORK</p>
-          <h1 className={styles.summaryTitle}>One workout<br />stronger.</h1>
-          <p className={styles.summarySub}>{session.workoutName} · {session.mode === "manual" ? "Manual log" : "Phone camera"}</p>
-          <div className={styles.stats}>
-            <div><strong>{totals.sets}</strong><span>SETS</span></div>
-            <div><strong>{totals.reps}</strong><span>REPS</span></div>
-            <div><strong>{totals.exercises}</strong><span>MOVES</span></div>
+          <div className={styles.overline}>SESSION COMPLETE</div>
+          <h1 className={styles.summaryTitle}>Workout done.</h1>
+          <p className={styles.summarySub}>{session.workoutName} · {session.mode === "manual" ? "Manual log" : "Phone tracking"}</p>
+
+          <div className={styles.stats} aria-label="Workout totals">
+            <div><strong>{totals.sets}</strong><span>Sets</span></div>
+            <div><strong>{totals.reps}</strong><span>Reps</span></div>
+            <div><strong>{totals.exercises}</strong><span>Exercises</span></div>
           </div>
-          <p className={styles.eyebrow}>YOUR SESSION</p>
+
+          <h2 className={styles.sectionTitle}>Session recap</h2>
           <div className={styles.summaryList}>
             {exercises.map((name) => {
               const sets = session.sets.filter((item) => item.exercise === name);
@@ -154,13 +184,13 @@ export function WorkoutSummary({
             })}
           </div>
           {session.mode === "camera" && (
-            <p className={styles.note}>Pose cues are movement estimates, not a guarantee of safe form. Stop if an exercise causes pain.</p>
+            <p className={styles.note}>Form cues are movement estimates, not a guarantee of safe technique.</p>
           )}
-          <p className={styles.savedNote}>Saved on this device. Your camera video is not stored.</p>
+          <p className={styles.savedNote}>Stored on this device. Camera video is not saved.</p>
         </main>
-        <div className={styles.footer}>
-          <button className={styles.primary} onClick={onDone}>Back to home <span>→</span></button>
-        </div>
+        <footer className={styles.footer}>
+          <button className={styles.primary} onClick={onDone}>Done <span aria-hidden="true">→</span></button>
+        </footer>
       </div>
     </div>
   );
