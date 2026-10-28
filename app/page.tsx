@@ -1,8 +1,6 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { ManualWorkout, WorkoutSummary } from "./components/WorkoutFlow";
-import { createSession, persistSession, readSessions, workoutStreak, sessionTotals, type LoggedSet, type WorkoutSession } from "../lib/session";
 
 const DAYS   = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -58,11 +56,12 @@ const DEFAULT_DAYS: Record<number, number[]> = {
 };
 
 const MODES = [
-  { id: "phone",   icon: "📱", label: "Phone camera", sub: "Automatic reps for supported movements" },
-  { id: "manual",  icon: "✏️", label: "Manual log", sub: "Track every set without a camera" },
+  { id: "manual",  icon: "✏️", label: "Manual Log",           sub: "Log sets yourself" },
+  { id: "phone",   icon: "📱", label: "Check-in Phone",        sub: "Use your camera" },
+  { id: "glasses", icon: "🥽", label: "Check-in Meta Glasses", sub: "Hands-free tracking" },
 ];
 
-type Screen     = "home" | "routines" | "profile" | "workout" | "tutorial" | "camera" | "manual" | "summary";
+type Screen     = "home" | "routines" | "profile" | "workout" | "tutorial" | "camera";
 type PermState  = "idle" | "granted" | "denied";
 type RepFlash   = "good" | "bad" | null;
 type FormStatus = "good" | "bad" | "neutral";
@@ -135,13 +134,7 @@ export default function Page() {
   const [weightUnit,   setWeightUnit]   = useState<"kg"|"lbs">("kg");
   const [daysFullFlash, setDaysFullFlash] = useState(false);
   const [screen,       setScreen]       = useState<Screen>("home");
-  const [mode,         setMode]         = useState("phone");
-  const [completedSession, setCompletedSession] = useState<WorkoutSession | null>(null);
-  const [sessionHistory, setSessionHistory] = useState<WorkoutSession[]>([]);
-  const [showFormDemo, setShowFormDemo] = useState(false);
-  const [confirmCameraExit, setConfirmCameraExit] = useState(false);
-  const sessionSetsRef = useRef<LoggedSet[]>([]);
-  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [mode,         setMode]         = useState("glasses");
   const [tutorialStep, setTutorialStep] = useState(1);
   const [permState,  setPermState]  = useState<PermState>("idle");
   const [exIdx,      setExIdx]      = useState(0);
@@ -227,7 +220,7 @@ export default function Page() {
 
   // immediate=true bypasses the between-text gap (used for rep counts + urgent form cues)
   const speak = useCallback((text: string, immediate = false) => {
-    if (mutedRef.current || !voiceEnabled || !("speechSynthesis" in window)) return;
+    if (mutedRef.current || !("speechSynthesis" in window)) return;
     const now = Date.now();
     const { text: last, time: lastTime } = lastSpeakRef.current;
     if (text === last && now - lastTime < 4000) return;           // same phrase: 4 s cooldown
@@ -237,7 +230,7 @@ export default function Page() {
     const u = new SpeechSynthesisUtterance(text);
     u.rate = 1.05; u.pitch = 1; u.volume = 1;
     window.speechSynthesis.speak(u);
-  }, [voiceEnabled]);
+  }, []);
 
   const resetRep = useCallback(() => {
     repStateRef.current = {
@@ -262,21 +255,10 @@ export default function Page() {
     setNoBody(false); setCornerStatus("neutral");
   }, []);
 
-  const saveCompletedWorkout = useCallback((session: WorkoutSession) => {
-    const updated = persistSession(session);
-    setCompletedSession(session);
-    setSessionHistory(updated);
-    setWorkoutCount(updated.length);
-    setStreak(workoutStreak(updated));
-    setScreen("summary");
-  }, []);
-
   const exitCamera = useCallback(() => {
     stopCamera();
     stopVoiceRecognition();
-    setConfirmCameraExit(false);
     if (restIntervalRef.current) { clearInterval(restIntervalRef.current); restIntervalRef.current = null; }
-    window.speechSynthesis?.cancel();
     restActiveRef.current = false;
     setRestActive(false);
     setPermState("idle"); setMpLoading(true); setExIdx(0); setCurrentSet(1);
@@ -295,7 +277,7 @@ export default function Page() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false, // camera works independently of speech permissions
+        audio: true,   // request mic at the same time so one permission prompt covers both
       });
       streamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
@@ -318,10 +300,10 @@ export default function Page() {
     if (savedDays) setSelectedDays(JSON.parse(savedDays));
     const savedDPW = localStorage.getItem("upform_days_per_week");
     if (savedDPW) setDaysPerWeek(parseInt(savedDPW));
-    const savedSessions = readSessions();
-    setSessionHistory(savedSessions);
-    setWorkoutCount(savedSessions.length);
-    setStreak(workoutStreak(savedSessions));
+    const savedCount = localStorage.getItem("upform_workout_count");
+    if (savedCount) setWorkoutCount(parseInt(savedCount));
+    const savedStreak = localStorage.getItem("upform_streak");
+    if (savedStreak) setStreak(parseInt(savedStreak));
   }, []);
 
   // Keep refs in sync so async callbacks (intervals) read fresh values
@@ -345,12 +327,10 @@ export default function Page() {
       setExIdx(i => i + 1);
       setCurrentSet(1);
     } else {
-      const session = createSession(activeWorkoutRef.current.name, "camera", sessionSetsRef.current);
-      stopCamera();
-      stopVoiceRecognition();
-      saveCompletedWorkout(session);
+      speak("Workout complete! Great job today!", true);
+      exitCamera();
     }
-  }, [speak, resetRep, exitCamera, stopCamera, stopVoiceRecognition, saveCompletedWorkout]);
+  }, [speak, resetRep, exitCamera]);
 
   const cancelVoiceCmd = useCallback(() => {
     if (voiceCmdTimerRef.current) { clearTimeout(voiceCmdTimerRef.current); voiceCmdTimerRef.current = null; }
@@ -379,8 +359,9 @@ export default function Page() {
   }, [speak]);
 
   const endWorkout = useCallback(() => {
-    setConfirmCameraExit(true);
-  }, []);
+    speak("Ending workout. Great job today!", true);
+    setTimeout(() => exitCamera(), 1800);
+  }, [speak, exitCamera]);
 
   const startVoiceRecognition = useCallback(() => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -403,7 +384,7 @@ export default function Page() {
               triggerVoiceCmd("Skipping set", "⏭", advanceAfterRest);
             } else if (text.includes("end workout") || text.includes("finish")) {
               speak("Ending workout.", true);
-              triggerVoiceCmd("Ending workout", "🏁", () => setConfirmCameraExit(true));
+              triggerVoiceCmd("Ending workout", "🏁", exitCamera);
             } else if (text.includes("pause")) {
               speak("Pausing workout.", true);
               triggerVoiceCmd("Pausing workout", "⏸", pauseWorkout);
@@ -466,22 +447,20 @@ export default function Page() {
 
   // Start voice recognition when camera is live; stop on exit
   useEffect(() => {
-    if (screen === "camera" && permState === "granted" && voiceEnabled) {
+    if (screen === "camera" && permState === "granted") {
       startVoiceRecognition();
     } else {
       stopVoiceRecognition();
     }
     return () => stopVoiceRecognition();
-  }, [screen, permState, voiceEnabled, startVoiceRecognition, stopVoiceRecognition]);
+  }, [screen, permState, startVoiceRecognition, stopVoiceRecognition]);
 
   // Trigger rest overlay once reps hit the target
   useEffect(() => {
     if (reps < ex.reps || restActive || screen !== "camera" || permState !== "granted") return;
     const t = setTimeout(() => {
-      const loggedReps = ex.type === "legpress" ? reps : repStateRef.current.count;
-      sessionSetsRef.current.push({ exercise: ex.name, set: currentSetRef.current, reps: loggedReps, target: ex.reps, flaggedReps: repStateRef.current.badReps });
       setLastSetStats({
-        good:   loggedReps,
+        good:   repStateRef.current.count,
         bad:    repStateRef.current.badReps,
         target: ex.reps,
       });
@@ -1176,20 +1155,11 @@ export default function Page() {
   const startRoutine = useCallback((workout: typeof WORKOUTS[0], from: Screen = "home") => {
     prevScreenRef.current = from;
     activeWorkoutRef.current = workout;
-    sessionSetsRef.current = [];
-    setShowFormDemo(false);
     setScreen("workout");
   }, []);
 
   /* ─── ONBOARDING ───────────────────────────────────────── */
   if (onboarded === null) return null;
-
-  if (screen === "summary" && completedSession) {
-    return <WorkoutSummary session={completedSession} onDone={() => { setCompletedSession(null); setScreen("home"); }} />;
-  }
-  if (screen === "manual") {
-    return <ManualWorkout workout={activeWorkoutRef.current} onFinish={saveCompletedWorkout} onExit={() => setScreen("workout")} />;
-  }
 
   if (!onboarded) {
     const finish = () => {
@@ -1676,7 +1646,7 @@ export default function Page() {
               background:"none", border:"none", color:"var(--color-muted-ash)",
               fontSize:14, fontWeight:500, cursor:"pointer", width:"100%",
             }}>
-              Skip setup for now
+              Existing user? Log in
             </button>
           </div>
         </div>
@@ -1689,36 +1659,52 @@ export default function Page() {
     screen === "profile" ? "profile" : screen === "routines" ? "routines" : "home";
 
   const BottomNav = (
-    <nav className="upform-nav" aria-label="Main navigation">
+    <nav style={{
+      display:"flex", alignItems:"stretch",
+      borderTop:"1px solid var(--color-stone)",
+      background:"var(--color-parchment)",
+      padding:"6px 8px calc(6px + env(safe-area-inset-bottom, 0px))",
+      gap:4,
+    }}>
       {([
-        { id:"home", label:"Home", path:"M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" },
-        { id:"routines", label:"Workouts", path:"M20.57 14.86L22 13.43 20.57 12 17 15.57 8.43 7 12 3.43 10.57 2 9.14 3.43l-1.43-1.43-1.43 1.43 1.43 1.43L4 8.57 5.43 10l-1.43 1.43 1.43 1.43L9 9.29l8.57 8.57-3.57 3.57 1.43 1.43 1.43-1.43 1.43 1.43 1.43-1.43-1.43-1.43z" },
-        { id:"profile", label:"Progress", path:"M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z" },
-      ] as const).map(tab => (
-        <button key={tab.id} type="button" aria-current={activeTab === tab.id ? "page" : undefined}
-          className={"upform-nav-tab" + (activeTab === tab.id ? " active" : "")}
-          onClick={() => setScreen(tab.id as Screen)}>
-          <div className="nav-icon">
-            <svg width="21" height="21" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d={tab.path}/></svg>
-          </div>
-          <span>{tab.label}</span>
-        </button>
-      ))}
+        { id:"home",     label:"Home",    path:"M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" },
+        { id:"routines", label:"Workout", path:"M20.57 14.86L22 13.43 20.57 12 17 15.57 8.43 7 12 3.43 10.57 2 9.14 3.43l-1.43-1.43-1.43 1.43 1.43 1.43L4 8.57 5.43 10l-1.43 1.43 1.43 1.43L9 9.29l8.57 8.57-3.57 3.57 1.43 1.43 1.43-1.43 1.43 1.43 1.43-1.43-1.43-1.43z" },
+        { id:"profile",  label:"Profile", path:"M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z" },
+      ] as const).map(tab => {
+        const isActive = activeTab === tab.id;
+        return (
+          <button key={tab.id} onClick={() => setScreen(tab.id as Screen)} style={{
+            flex:1, display:"flex", flexDirection:"column", alignItems:"center",
+            gap:3, background:"none", border:"none", cursor:"pointer", padding:"6px 0",
+            borderRadius:14,
+          }}>
+            <div style={{
+              width:36, height:36, borderRadius:11, display:"grid", placeItems:"center",
+              background: isActive ? "var(--color-forest-canopy)" : "transparent",
+              transition:".15s",
+            }}>
+              <svg width="20" height="20" viewBox="0 0 24 24"
+                fill={isActive ? "var(--color-ink)" : "var(--color-muted-ash)"}>
+                <path d={tab.path}/>
+              </svg>
+            </div>
+            <span style={{
+              fontSize:10, fontWeight:700, letterSpacing:".04em", textTransform:"uppercase",
+              color: isActive ? "var(--color-ink)" : "var(--color-muted-ash)",
+            }}>{tab.label}</span>
+          </button>
+        );
+      })}
     </nav>
   );
 
-  const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  monday.setDate(monday.getDate() - (monday.getDay() + 6) % 7);
-  const weeklyActivity = Array.from({ length: 7 }, (_, index) => {
-    const date = new Date(monday);
-    date.setDate(date.getDate() + index);
-    return {
-      label: ["M","T","W","T","F","S","S"][index],
-      today: date.toDateString() === today.toDateString(),
-      count: sessionHistory.filter((item) => new Date(item.completedAt).toDateString() === date.toDateString()).length,
-    };
-  });
-  const maxWeeklyActivity = Math.max(1, ...weeklyActivity.map((item) => item.count));
+  const CHART_DATA = [0, 45, 0, 30, 0, 60, 0]; // Mon–Sun placeholder minutes
+  const CHART_MAX  = Math.max(...CHART_DATA, 1);
+  const RECENT = [
+    { name: "Shoulder & Squat Day", date: "Today", sets: 9  },
+    { name: "Legs & Core Day",      date: "Wed",   sets: 10 },
+    { name: "Push & Legs Day",      date: "Mon",   sets: 9  },
+  ];
 
   /* ─── HOME ─────────────────────────────────────────────── */
   const sortedSelectedDays = [...selectedDays].sort((a, b) => a - b);
@@ -1733,47 +1719,88 @@ export default function Page() {
   if (screen === "home") return (
     <div className="app">
       <div className="mobile-frame">
+        <div className="statusbar">
+          <span>{String(today.getHours()).padStart(2,"0")}:{String(today.getMinutes()).padStart(2,"0")}</span>
+          <div className="icons"><span className="dot"/><span className="dot"/><span className="pill"/></div>
+        </div>
         <main style={{ paddingBottom:24 }}>
 
-          <header className="home-heading">
-            <div className="overline">{DAYS[todayIdx] + ", " + MONTHS[today.getMonth()] + " " + today.getDate()}</div>
-            <h1>Hi, {userName || "there"}.</h1>
-            <p>{todayWorkout ? "Your next workout is ready." : "Choose a workout and make today count."}</p>
-          </header>
-
-          <div className="home-stats" aria-label="Your training statistics">
-            <div className="home-stat">
-              <strong>{workoutCount}</strong>
-              <span>Workouts completed</span>
+          {/* Stat banner */}
+          <div style={{
+            background:"var(--color-forest-canopy)", borderRadius:20,
+            padding:"13px 18px", marginBottom:20,
+            display:"flex", justifyContent:"space-between", alignItems:"center",
+          }}>
+            <div>
+              <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase",
+                letterSpacing:".1em", color:"rgba(26,26,26,.55)", marginBottom:2 }}>
+                Total
+              </div>
+              <div style={{ fontSize:18, fontWeight:800, color:"var(--color-ink)", lineHeight:1 }}>
+                Workout {workoutCount || 1}
+              </div>
             </div>
-            <div className="home-stat">
-              <strong>{streak}</strong>
-              <span>Day streak</span>
+            <div style={{ width:1, height:32, background:"rgba(26,26,26,.12)" }}/>
+            <div style={{ textAlign:"right" }}>
+              <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase",
+                letterSpacing:".1em", color:"rgba(26,26,26,.55)", marginBottom:2 }}>
+                Streak
+              </div>
+              <div style={{ fontSize:18, fontWeight:800, color:"var(--color-ink)", lineHeight:1 }}>
+                Week {streak || 1}
+              </div>
             </div>
           </div>
 
-          <div className="workout-mode-label">Your week</div>
-          <div className="week-picker" aria-label="Workout schedule">
+          {/* Week date strip */}
+          <div style={{ display:"flex", gap:6, marginBottom:24 }}>
             {week.map((d, i) => {
-              const dayOfWeek = d.getDay();
-              const isSelected = dayOfWeek === calSelectedDay;
-              const hasWorkout = sortedSelectedDays.includes(dayOfWeek);
+              const dayOfWeek    = d.getDay();
+              const isToday      = dayOfWeek === todayIdx;
+              const isSelected   = dayOfWeek === calSelectedDay;
+              const isWorkoutDay = sortedSelectedDays.includes(dayOfWeek);
               return (
-                <button key={i} type="button" onClick={() => setCalSelectedDay(dayOfWeek)}
-                  aria-label={DAYS[dayOfWeek] + " " + d.getDate() + (hasWorkout ? ", workout scheduled" : ", rest day")}
-                  aria-pressed={isSelected}
-                  className={"week-day" + (isSelected ? " selected" : "") + (hasWorkout ? " has-workout" : "")}>
-                  <span>{DAYS[dayOfWeek]}</span>
-                  <strong>{d.getDate()}</strong>
+                <button key={i} onClick={() => setCalSelectedDay(dayOfWeek)} style={{
+                  flex:1, display:"flex", flexDirection:"column", alignItems:"center",
+                  gap:4, padding:"10px 0", borderRadius:18,
+                  background: isSelected ? "var(--color-forest-canopy)" : "transparent",
+                  border:`1px solid ${isSelected ? "var(--color-forest-canopy)" : "var(--color-stone)"}`,
+                  opacity: !isWorkoutDay && !isToday && !isSelected ? 0.3 : 1,
+                  cursor: isWorkoutDay || isToday ? "pointer" : "default",
+                  transition:".15s",
+                }}>
+                  <span style={{ fontSize:9, fontWeight:700, letterSpacing:".08em",
+                    textTransform:"uppercase",
+                    color: isSelected ? "rgba(26,26,26,.6)" : "var(--color-muted-ash)" }}>
+                    {DAYS[dayOfWeek]}
+                  </span>
+                  <span style={{ fontSize:20, fontWeight:700, lineHeight:1, color:"var(--color-ink)" }}>
+                    {d.getDate()}
+                  </span>
+                  {isWorkoutDay && !isSelected && (
+                    <div style={{ width:5, height:5, borderRadius:"50%",
+                      background:"var(--color-forest-canopy)", marginTop:1 }}/>
+                  )}
                 </button>
               );
             })}
           </div>
 
+          {/* Greeting */}
+          <div style={{ marginBottom:20 }}>
+            <p style={{ fontSize:13, color:"var(--color-muted-ash)", marginBottom:4 }}>
+              {DAYS[todayIdx]}, {MONTHS[today.getMonth()]} {today.getDate()}
+            </p>
+            <h1 style={{ fontSize:34, fontWeight:800, letterSpacing:"-.02em",
+              lineHeight:1.05, color:"#1A1A1A" }}>
+              Hi {userName || "there"}
+            </h1>
+          </div>
+
           {/* Workout card: driven by selected calendar day */}
           {selectedWorkout ? (
             <>
-              <div className="card pad workout-feature-card">
+              <div className="card pad">
                 <div className="eyebrow">
                   {isSelectedToday ? "Today's Workout" : `${DAYS[calSelectedDay]}'s Workout`}
                 </div>
@@ -1805,9 +1832,8 @@ export default function Page() {
                 </div>
                 <h3 style={{ marginBottom:8 }}>Rest Day</h3>
                 <p style={{ fontSize:14, color:"var(--color-muted-ash)", margin:0, lineHeight:1.6 }}>
-                  No workout scheduled. You can train on any day.
+                  Recovery is part of the plan. Stay hydrated, sleep well, and come back stronger.
                 </p>
-                <button type="button" className="btn secondary" style={{width:"100%",marginTop:18}} onClick={() => setScreen("routines")}>Browse workouts</button>
               </div>
             </>
           )}
@@ -1821,8 +1847,12 @@ export default function Page() {
   if (screen === "routines") return (
     <div className="app">
       <div className="mobile-frame" style={{ display:"flex", flexDirection:"column" }}>
+        <div className="statusbar">
+          <span>{String(today.getHours()).padStart(2,"0")}:{String(today.getMinutes()).padStart(2,"0")}</span>
+          <div className="icons"><span className="dot"/><span className="dot"/><span className="pill"/></div>
+        </div>
         <main style={{ flex:1, overflowY:"auto", paddingBottom:16 }}>
-          <h2 style={{ fontSize:32, fontWeight:750, color:"var(--color-ink)", marginBottom:4, letterSpacing:"-.045em" }}>Workouts</h2>
+          <h2 style={{ fontSize:28, fontWeight:800, color:"var(--color-ink)", marginBottom:4 }}>Routines</h2>
           <p style={{ fontSize:13, color:"var(--color-muted-ash)", marginBottom:16 }}>Pick a workout and start tracking</p>
 
           <input ref={importFileRef} type="file" accept=".json"
@@ -1842,7 +1872,7 @@ export default function Page() {
               const totalSets = w.exercises.reduce((s, e) => s + e.sets, 0);
               const estMin    = Math.round(totalSets * 2.5);
               return (
-                <div key={w.name} className="card pad routine-card">
+                <div key={w.name} className="card pad" style={{ borderRadius:20 }}>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
                     <div>
                       <div style={{ fontSize:11, fontWeight:700, textTransform:"uppercase",
@@ -1883,6 +1913,10 @@ export default function Page() {
   if (screen === "profile") return (
     <div className="app">
       <div className="mobile-frame" style={{ display:"flex", flexDirection:"column" }}>
+        <div className="statusbar">
+          <span>{String(today.getHours()).padStart(2,"0")}:{String(today.getMinutes()).padStart(2,"0")}</span>
+          <div className="icons"><span className="dot"/><span className="dot"/><span className="pill"/></div>
+        </div>
         <main style={{ flex:1, overflowY:"auto", paddingBottom:16 }}>
           {/* Avatar + name */}
           <div style={{ display:"flex", flexDirection:"column", alignItems:"center", marginBottom:24 }}>
@@ -1899,8 +1933,8 @@ export default function Page() {
           {/* Stats banner */}
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:20 }}>
             {[
-              { label:"Workouts", value: workoutCount },
-              { label:"Day streak", value: streak },
+              { label:"Total Workouts", value: workoutCount || 1 },
+              { label:"Week Streak",    value: streak || 1 },
             ].map(s => (
               <div key={s.label} className="card pad" style={{ borderRadius:16, textAlign:"center" }}>
                 <div style={{ fontSize:26, fontWeight:800, color:"var(--color-ink)" }}>{s.value}</div>
@@ -1916,16 +1950,22 @@ export default function Page() {
               This Week
             </div>
             <div style={{ display:"flex", gap:6, alignItems:"flex-end", height:56 }}>
-              {weeklyActivity.map((day, i) => {
-                const height = day.count ? Math.max(12, Math.round(day.count / maxWeeklyActivity * 100)) : 4;
+              {["M","T","W","T","F","S","S"].map((d, i) => {
+                const heights = [45, 0, 38, 0, 52, 0, 0];
+                const h = heights[i];
+                const isToday = i === (today.getDay() + 6) % 7;
                 return (
-                  <div key={i} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:5 }}
-                    aria-label={day.label + ": " + day.count + " workouts"}>
-                    <div style={{ width:"100%", height:66, display:"flex", alignItems:"flex-end" }}>
-                      <div style={{ width:"100%", height:day.count ? height + "%" : 4, borderRadius:5,
-                        background:day.count ? day.today ? "var(--color-forest-canopy)" : "#9eb982" : "var(--color-stone)" }} />
+                  <div key={i} style={{ flex:1, display:"flex", flexDirection:"column",
+                    alignItems:"center", gap:4 }}>
+                    <div style={{ width:"100%", height:56, display:"flex", alignItems:"flex-end" }}>
+                      <div style={{ width:"100%", height: h ? `${h}%` : 4, borderRadius:4,
+                        background: h > 0
+                          ? isToday ? "var(--color-forest-canopy)" : "rgba(209,244,125,.45)"
+                          : "var(--color-stone)",
+                        transition:".2s" }}/>
                     </div>
-                    <span style={{ fontSize:11, fontWeight:day.today ? 750 : 550, color:day.today ? "var(--color-ink)" : "var(--color-muted-ash)" }}>{day.label}</span>
+                    <span style={{ fontSize:9, fontWeight:700,
+                      color: isToday ? "var(--color-ink)" : "var(--color-muted-ash)" }}>{d}</span>
                   </div>
                 );
               })}
@@ -1938,29 +1978,23 @@ export default function Page() {
             Recent Workouts
           </div>
           <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-            {sessionHistory.length ? sessionHistory.slice(0, 5).map((session) => {
-              const totals = sessionTotals(session);
-              return (
-                <div key={session.id} className="card pad" style={{ borderRadius:16, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                  <div>
-                    <div style={{ fontSize:14, fontWeight:700, color:"var(--color-ink)" }}>{session.workoutName}</div>
-                    <div style={{ fontSize:12, color:"var(--color-muted-ash)", marginTop:3 }}>
-                      {new Date(session.completedAt).toLocaleDateString(undefined, {month:"short",day:"numeric"})} · {session.mode === "camera" ? "Phone camera" : "Manual"}
-                    </div>
-                  </div>
-                  <div style={{ textAlign:"right" }}>
-                    <div style={{ fontSize:13, fontWeight:700, color:"var(--color-ink)" }}>{totals.sets} sets</div>
-                    <div style={{ fontSize:12, color:"var(--color-muted-ash)" }}>{totals.reps} reps</div>
-                  </div>
+            {[
+              { name:"Shoulder & Squat Day", date:"Today",      sets:9,  reps:108 },
+              { name:"Legs & Core Day",     date:"3 days ago", sets:10, reps:100 },
+              { name:"Push & Legs Day",     date:"5 days ago", sets:10, reps:110 },
+            ].map(r => (
+              <div key={r.name + r.date} className="card pad"
+                style={{ borderRadius:16, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <div>
+                  <div style={{ fontSize:14, fontWeight:700, color:"var(--color-ink)" }}>{r.name}</div>
+                  <div style={{ fontSize:11, color:"var(--color-muted-ash)", marginTop:1 }}>{r.date}</div>
                 </div>
-              );
-            }) : (
-              <div className="card pad">
-                <div style={{fontSize:15,fontWeight:700,marginBottom:6}}>No workouts yet</div>
-                <p style={{fontSize:13,marginBottom:16}}>Finish your first workout to start tracking progress here.</p>
-                <button className="btn secondary" style={{width:"100%"}} onClick={() => setScreen("routines")}>Browse workouts</button>
+                <div style={{ textAlign:"right" }}>
+                  <div style={{ fontSize:12, fontWeight:700, color:"var(--color-ink)" }}>{r.sets} sets</div>
+                  <div style={{ fontSize:11, color:"var(--color-muted-ash)" }}>{r.reps} reps</div>
+                </div>
               </div>
-            )}
+            ))}
           </div>
         </main>
         {BottomNav}
@@ -1972,6 +2006,10 @@ export default function Page() {
   if (screen === "workout") return (
     <div className="app">
       <div className="mobile-frame">
+        <div className="statusbar">
+          <span>{String(today.getHours()).padStart(2,"0")}:{String(today.getMinutes()).padStart(2,"0")}</span>
+          <div className="icons"><span className="dot"/><span className="dot"/><span className="pill"/></div>
+        </div>
         <main>
           {/* Back */}
           <button onClick={() => setScreen(prevScreenRef.current)} style={{
@@ -1980,18 +2018,6 @@ export default function Page() {
             fontSize:13, fontWeight:600, marginBottom:18,
           }}>← Back</button>
 
-          {/* Header */}
-          <div style={{ marginBottom:16 }}>
-            <p className="eyebrow" style={{ marginBottom:4 }}>Ready to train</p>
-            <h2 style={{ fontSize:32,
-              fontWeight:400, color:"var(--color-ink)", lineHeight:1 }}>{activeWorkoutRef.current.name}</h2>
-          </div>
-
-          <button type="button" className="workout-preview-toggle" onClick={() => setShowFormDemo((value) => !value)} aria-expanded={showFormDemo}>
-            {showFormDemo ? "Hide movement preview" : "Preview first movement"} <span aria-hidden="true">{showFormDemo ? "−" : "+"}</span>
-          </button>
-          {showFormDemo && (
-            <div className="workout-demo">
           {/* Form animation */}
           <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:4, marginBottom:20 }}>
             <span className="eyebrow" style={{ marginBottom:2 }}>Correct Form</span>
@@ -2225,8 +2251,12 @@ export default function Page() {
             )}
           </div>
 
-            </div>
-          )}
+          {/* Header */}
+          <div style={{ marginBottom:16 }}>
+            <p className="eyebrow" style={{ marginBottom:4 }}>Ready to train</p>
+            <h2 style={{ fontSize:32,
+              fontWeight:400, color:"var(--color-ink)", lineHeight:1 }}>{activeWorkoutRef.current.name}</h2>
+          </div>
 
           {/* Stats */}
           <div className="metric-row" style={{ marginBottom:20 }}>
@@ -2247,7 +2277,7 @@ export default function Page() {
             {MODES.map(m => {
               const isActive = mode === m.id;
               return (
-                <button key={m.id} type="button" aria-pressed={isActive} onClick={() => setMode(m.id)} style={{
+                <button key={m.id} onClick={() => setMode(m.id)} style={{
                   display:"flex", alignItems:"center", gap:12, padding:"12px 16px",
                   borderRadius:16, cursor:"pointer", textAlign:"left", transition:".15s",
                   background: isActive ? "rgba(209,244,125,.3)" : "var(--color-parchment)",
@@ -2255,8 +2285,8 @@ export default function Page() {
                 }}>
                   <span style={{ fontSize:18, lineHeight:1 }}>{m.icon}</span>
                   <div style={{ flex:1 }}>
-                    <div style={{ fontWeight:650, fontSize:15, color:"var(--color-ink)" }}>{m.label}</div>
-                    <div style={{ fontSize:12, color:"var(--color-muted-ash)", marginTop:4 }}>{m.sub}</div>
+                    <div style={{ fontWeight:600, fontSize:14, color:"var(--color-ink)" }}>{m.label}</div>
+                    <div style={{ fontSize:11, color:"var(--color-muted-ash)", marginTop:1 }}>{m.sub}</div>
                   </div>
                   {isActive && (
                     <div style={{ width:20, height:20, borderRadius:"50%",
@@ -2270,8 +2300,8 @@ export default function Page() {
 
           <div className="sticky-cta">
             <button className="btn dark" style={{ width:"100%", fontSize:16 }}
-              onClick={() => { sessionSetsRef.current = []; setReps(0); setExIdx(0); setCurrentSet(1); if (mode === "manual") setScreen("manual"); else { setTutorialStep(1); setScreen("tutorial"); } }}>
-              {mode === "manual" ? "Start manual workout" : "Start camera workout"}
+              onClick={() => { setTutorialStep(1); setScreen("tutorial"); }}>
+              Start
             </button>
           </div>
         </main>
@@ -2404,7 +2434,7 @@ export default function Page() {
       {
         eyebrow: "VOICE CUES · 2 OF 3",
         heading: "Your coach talks to you",
-        body: "Optional voice cues describe detected movement. You can use the on-screen controls without a microphone.",
+        body: "You\u2019ll hear audio cues when your form slips. Say \u201cnext\u201d to move to the next set, or \u201cstop\u201d to end the workout.",
         cta: "Next",
         illustration: (
           <svg viewBox="0 0 240 218" width="240" height="218" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2446,8 +2476,8 @@ export default function Page() {
       },
       {
         eyebrow: "YOU'RE ALL SET · 3 OF 3",
-        heading: "Set up your phone and go",
-        body: "Prop your phone securely, step into view, and allow your camera. UpForm will estimate reps on supported exercises.",
+        heading: "Put on your glasses and go",
+        body: "Wear your Meta glasses, step into position, and the session starts automatically. Your coach is with you the whole way.",
         cta: "Start workout",
         illustration: (
           <div style={{ position:"relative", width:240, height:240, display:"flex", alignItems:"center", justifyContent:"center" }}>
@@ -2642,15 +2672,17 @@ export default function Page() {
                   border:"1px solid rgba(255,255,255,.18)", display:"grid", placeItems:"center", fontSize:24 }}>🎤</div>
               </div>
               <h2 style={{ fontSize:20, fontWeight:700, color:"white", marginBottom:10, lineHeight:1.2 }}>
-                Start your camera
+                Camera & Microphone
               </h2>
               <p style={{ fontSize:13, color:"rgba(255,255,255,.55)", lineHeight:1.6, marginBottom:28 }}>
-                Your camera estimates body positions in real time. No video is saved. You can turn on optional voice coaching after starting.
+                Camera tracks your form in real time. Microphone lets you say{" "}
+                <strong style={{ color:"rgba(255,255,255,.85)" }}>"Skip"</strong>{" "}
+                to move to the next set hands-free.
               </p>
               <button onClick={requestCamera} style={{ width:"100%", height:50, borderRadius:14,
                 background:"white", color:"#1a1a1a", border:"none",
                 fontWeight:700, fontSize:15, cursor:"pointer", marginBottom:12 }}>
-                Allow camera
+                Allow Camera & Mic
               </button>
               <button onClick={exitCamera} style={{ width:"100%", height:40, borderRadius:14,
                 background:"transparent", color:"rgba(255,255,255,.45)",
@@ -2925,24 +2957,24 @@ export default function Page() {
               </div>
             )}
 
-            {/* Voice cues toggle — camera video is not recorded */}
+            {/* REC + mute toggle */}
             <div style={{ position:"absolute", top:18, left:"50%", transform:"translateX(-50%)",
               display:"flex", alignItems:"center", gap:10 }}>
               <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                <div style={{ width:7, height:7, borderRadius:"50%", background:"var(--color-forest-canopy)",
+                <div style={{ width:7, height:7, borderRadius:"50%", background:"#f23",
                   animation:"pulsedot 1.2s ease-in-out infinite" }}/>
                 <span style={{ color:"rgba(255,255,255,.55)", fontSize:10,
-                  fontWeight:700, letterSpacing:".12em" }}>LIVE</span>
+                  fontWeight:700, letterSpacing:".12em" }}>REC</span>
               </div>
               <button
                 onClick={() => {
-                  const next = !voiceEnabled;
-                  setVoiceEnabled(next);
-                  mutedRef.current = !next;
-                  setMuted(!next);
-                  if (!next) window.speechSynthesis?.cancel();
+                  const next = !muted;
+                  mutedRef.current = next;
+                  setMuted(next);
+                  if (next) window.speechSynthesis?.cancel();
+                  else speak("Voice on");
                 }}
-                title={voiceEnabled ? "Turn off voice coaching" : "Turn on voice coaching"}
+                title={muted ? "Unmute voice" : "Mute voice"}
                 style={{
                   background:"rgba(0,0,0,.4)", backdropFilter:"blur(12px)",
                   border:"1px solid rgba(255,255,255,.18)", borderRadius:8,
@@ -2950,7 +2982,7 @@ export default function Page() {
                   cursor:"pointer", fontSize:15, lineHeight:1,
                   color: muted ? "rgba(255,255,255,.35)" : "white",
                 }}>
-                {voiceEnabled ? "🔊" : "🔇"}
+                {muted ? "🔇" : "🔊"}
               </button>
             </div>
 
@@ -3080,37 +3112,27 @@ export default function Page() {
               </div>
             )}
 
-            {/* Essential actions remain accessible while camera tracking */}
+            {/* Bottom controls */}
             <div style={{ position:"absolute", bottom:24, left:18, right:18,
-              display:"flex", justifyContent:"space-between", alignItems:"center", gap:12 }}>
-              <button type="button" onClick={() => setConfirmCameraExit(true)} style={{
-                minWidth:88, minHeight:46, background:"rgba(0,0,0,.55)", backdropFilter:"blur(14px)",
-                border:"1px solid rgba(255,255,255,.2)", borderRadius:13,
-                padding:"10px 16px", color:"#fff", fontSize:14, fontWeight:650, cursor:"pointer" }}>End</button>
-              <button type="button" onClick={pauseWorkout} disabled={paused || restActive} style={{
-                minWidth:88, minHeight:46, background:"rgba(255,255,255,.92)", backdropFilter:"blur(14px)",
-                border:"1px solid rgba(255,255,255,.25)", borderRadius:13,
-                padding:"10px 16px", color:"#172017", fontSize:14, fontWeight:700,
-                cursor:"pointer", opacity:restActive ? .45 : 1 }}>Pause</button>
-            </div>
+              display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <button onClick={exitCamera} style={{
+                background:"rgba(0,0,0,.4)", backdropFilter:"blur(14px)",
+                WebkitBackdropFilter:"blur(14px)",
+                border:"1px solid rgba(255,255,255,.15)", borderRadius:12,
+                padding:"10px 20px", color:"rgba(255,255,255,.75)",
+                fontSize:13, fontWeight:600, cursor:"pointer" }}>← Back</button>
 
-            {confirmCameraExit && (
-              <div style={{ position:"absolute", inset:0, zIndex:90, padding:28,
-                display:"flex", flexDirection:"column", alignItems:"stretch", justifyContent:"center",
-                background:"rgba(8,12,9,.94)", backdropFilter:"blur(18px)" }} role="dialog" aria-modal="true" aria-label="End workout">
-                <p style={{ color:"rgba(255,255,255,.6)", fontSize:11, fontWeight:750, letterSpacing:".14em", marginBottom:10 }}>END WORKOUT</p>
-                <h2 style={{ color:"white", fontSize:30, letterSpacing:"-.045em", marginBottom:12 }}>Leave this workout?</h2>
-                <p style={{ color:"rgba(255,255,255,.68)", fontSize:15, lineHeight:1.6, marginBottom:28 }}>
-                  Your unfinished camera session will not be saved.
-                </p>
-                <button type="button" onClick={() => setConfirmCameraExit(false)} style={{
-                  background:"var(--color-forest-canopy)", color:"#192019", border:0, borderRadius:14,
-                  minHeight:54, fontSize:16, fontWeight:750, marginBottom:10 }}>Keep training</button>
-                <button type="button" onClick={exitCamera} style={{
-                  background:"transparent", color:"#fff", border:"1px solid rgba(255,255,255,.28)",
-                  borderRadius:14, minHeight:50, fontSize:14, fontWeight:650 }}>Discard workout</button>
+              <div style={{
+                background:"rgba(0,0,0,.35)", backdropFilter:"blur(10px)",
+                border:"1px solid rgba(255,255,255,.12)", borderRadius:10,
+                padding:"6px 14px", display:"flex", alignItems:"center", gap:6,
+              }}>
+                <span style={{ fontSize:13 }}>🎤</span>
+                <span style={{ fontSize:11, color:"rgba(255,255,255,.55)", fontWeight:600 }}>
+                  "skip" · "pause" · "end workout"
+                </span>
               </div>
-            )}
+            </div>
 
             {/* ── REST OVERLAY ── */}
             {restActive && (() => {
