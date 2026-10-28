@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { ManualWorkout, WorkoutSummary } from "./components/WorkoutFlow";
-import { createSession, persistSession, readSessions, workoutStreak, type LoggedSet, type WorkoutSession } from "../lib/session";
+import { createSession, persistSession, readSessions, workoutStreak, sessionTotals, type LoggedSet, type WorkoutSession } from "../lib/session";
 
 const DAYS   = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -137,6 +137,8 @@ export default function Page() {
   const [screen,       setScreen]       = useState<Screen>("home");
   const [mode,         setMode]         = useState("phone");
   const [completedSession, setCompletedSession] = useState<WorkoutSession | null>(null);
+  const [sessionHistory, setSessionHistory] = useState<WorkoutSession[]>([]);
+  const [showFormDemo, setShowFormDemo] = useState(false);
   const sessionSetsRef = useRef<LoggedSet[]>([]);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [tutorialStep, setTutorialStep] = useState(1);
@@ -262,6 +264,7 @@ export default function Page() {
   const saveCompletedWorkout = useCallback((session: WorkoutSession) => {
     const updated = persistSession(session);
     setCompletedSession(session);
+    setSessionHistory(updated);
     setWorkoutCount(updated.length);
     setStreak(workoutStreak(updated));
     setScreen("summary");
@@ -314,6 +317,7 @@ export default function Page() {
     const savedDPW = localStorage.getItem("upform_days_per_week");
     if (savedDPW) setDaysPerWeek(parseInt(savedDPW));
     const savedSessions = readSessions();
+    setSessionHistory(savedSessions);
     setWorkoutCount(savedSessions.length);
     setStreak(workoutStreak(savedSessions));
   }, []);
@@ -1172,6 +1176,7 @@ export default function Page() {
     prevScreenRef.current = from;
     activeWorkoutRef.current = workout;
     sessionSetsRef.current = [];
+    setShowFormDemo(false);
     setScreen("workout");
   }, []);
 
@@ -1670,7 +1675,7 @@ export default function Page() {
               background:"none", border:"none", color:"var(--color-muted-ash)",
               fontSize:14, fontWeight:500, cursor:"pointer", width:"100%",
             }}>
-              Existing user? Log in
+              Skip setup for now
             </button>
           </div>
         </div>
@@ -1683,52 +1688,36 @@ export default function Page() {
     screen === "profile" ? "profile" : screen === "routines" ? "routines" : "home";
 
   const BottomNav = (
-    <nav style={{
-      display:"flex", alignItems:"stretch",
-      borderTop:"1px solid var(--color-stone)",
-      background:"var(--color-parchment)",
-      padding:"6px 8px calc(6px + env(safe-area-inset-bottom, 0px))",
-      gap:4,
-    }}>
+    <nav className="upform-nav" aria-label="Main navigation">
       {([
-        { id:"home",     label:"Home",    path:"M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" },
-        { id:"routines", label:"Workout", path:"M20.57 14.86L22 13.43 20.57 12 17 15.57 8.43 7 12 3.43 10.57 2 9.14 3.43l-1.43-1.43-1.43 1.43 1.43 1.43L4 8.57 5.43 10l-1.43 1.43 1.43 1.43L9 9.29l8.57 8.57-3.57 3.57 1.43 1.43 1.43-1.43 1.43 1.43 1.43-1.43-1.43-1.43z" },
-        { id:"profile",  label:"Profile", path:"M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z" },
-      ] as const).map(tab => {
-        const isActive = activeTab === tab.id;
-        return (
-          <button key={tab.id} onClick={() => setScreen(tab.id as Screen)} style={{
-            flex:1, display:"flex", flexDirection:"column", alignItems:"center",
-            gap:3, background:"none", border:"none", cursor:"pointer", padding:"6px 0",
-            borderRadius:14,
-          }}>
-            <div style={{
-              width:36, height:36, borderRadius:11, display:"grid", placeItems:"center",
-              background: isActive ? "var(--color-forest-canopy)" : "transparent",
-              transition:".15s",
-            }}>
-              <svg width="20" height="20" viewBox="0 0 24 24"
-                fill={isActive ? "var(--color-ink)" : "var(--color-muted-ash)"}>
-                <path d={tab.path}/>
-              </svg>
-            </div>
-            <span style={{
-              fontSize:10, fontWeight:700, letterSpacing:".04em", textTransform:"uppercase",
-              color: isActive ? "var(--color-ink)" : "var(--color-muted-ash)",
-            }}>{tab.label}</span>
-          </button>
-        );
-      })}
+        { id:"home", label:"Home", path:"M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" },
+        { id:"routines", label:"Workouts", path:"M20.57 14.86L22 13.43 20.57 12 17 15.57 8.43 7 12 3.43 10.57 2 9.14 3.43l-1.43-1.43-1.43 1.43 1.43 1.43L4 8.57 5.43 10l-1.43 1.43 1.43 1.43L9 9.29l8.57 8.57-3.57 3.57 1.43 1.43 1.43-1.43 1.43 1.43 1.43-1.43-1.43-1.43z" },
+        { id:"profile", label:"Progress", path:"M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z" },
+      ] as const).map(tab => (
+        <button key={tab.id} type="button" aria-current={activeTab === tab.id ? "page" : undefined}
+          className={"upform-nav-tab" + (activeTab === tab.id ? " active" : "")}
+          onClick={() => setScreen(tab.id as Screen)}>
+          <div className="nav-icon">
+            <svg width="21" height="21" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d={tab.path}/></svg>
+          </div>
+          <span>{tab.label}</span>
+        </button>
+      ))}
     </nav>
   );
 
-  const CHART_DATA = [0, 45, 0, 30, 0, 60, 0]; // Mon–Sun placeholder minutes
-  const CHART_MAX  = Math.max(...CHART_DATA, 1);
-  const RECENT = [
-    { name: "Shoulder & Squat Day", date: "Today", sets: 9  },
-    { name: "Legs & Core Day",      date: "Wed",   sets: 10 },
-    { name: "Push & Legs Day",      date: "Mon",   sets: 9  },
-  ];
+  const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  monday.setDate(monday.getDate() - (monday.getDay() + 6) % 7);
+  const weeklyActivity = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(monday);
+    date.setDate(date.getDate() + index);
+    return {
+      label: ["M","T","W","T","F","S","S"][index],
+      today: date.toDateString() === today.toDateString(),
+      count: sessionHistory.filter((item) => new Date(item.completedAt).toDateString() === date.toDateString()).length,
+    };
+  });
+  const maxWeeklyActivity = Math.max(1, ...weeklyActivity.map((item) => item.count));
 
   /* ─── HOME ─────────────────────────────────────────────── */
   const sortedSelectedDays = [...selectedDays].sort((a, b) => a - b);
@@ -1743,88 +1732,47 @@ export default function Page() {
   if (screen === "home") return (
     <div className="app">
       <div className="mobile-frame">
-        <div className="statusbar">
-          <span>{String(today.getHours()).padStart(2,"0")}:{String(today.getMinutes()).padStart(2,"0")}</span>
-          <div className="icons"><span className="dot"/><span className="dot"/><span className="pill"/></div>
-        </div>
         <main style={{ paddingBottom:24 }}>
 
-          {/* Stat banner */}
-          <div style={{
-            background:"var(--color-forest-canopy)", borderRadius:20,
-            padding:"13px 18px", marginBottom:20,
-            display:"flex", justifyContent:"space-between", alignItems:"center",
-          }}>
-            <div>
-              <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase",
-                letterSpacing:".1em", color:"rgba(26,26,26,.55)", marginBottom:2 }}>
-                Total
-              </div>
-              <div style={{ fontSize:18, fontWeight:800, color:"var(--color-ink)", lineHeight:1 }}>
-                Workout {workoutCount || 1}
-              </div>
+          <header className="home-heading">
+            <div className="overline">{DAYS[todayIdx] + ", " + MONTHS[today.getMonth()] + " " + today.getDate()}</div>
+            <h1>Hi, {userName || "there"}.</h1>
+            <p>{todayWorkout ? "Your next workout is ready." : "Choose a workout and make today count."}</p>
+          </header>
+
+          <div className="home-stats" aria-label="Your training statistics">
+            <div className="home-stat">
+              <strong>{workoutCount}</strong>
+              <span>Workouts completed</span>
             </div>
-            <div style={{ width:1, height:32, background:"rgba(26,26,26,.12)" }}/>
-            <div style={{ textAlign:"right" }}>
-              <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase",
-                letterSpacing:".1em", color:"rgba(26,26,26,.55)", marginBottom:2 }}>
-                Streak
-              </div>
-              <div style={{ fontSize:18, fontWeight:800, color:"var(--color-ink)", lineHeight:1 }}>
-                Week {streak || 1}
-              </div>
+            <div className="home-stat">
+              <strong>{streak}</strong>
+              <span>Day streak</span>
             </div>
           </div>
 
-          {/* Week date strip */}
-          <div style={{ display:"flex", gap:6, marginBottom:24 }}>
+          <div className="workout-mode-label">Your week</div>
+          <div className="week-picker" aria-label="Workout schedule">
             {week.map((d, i) => {
-              const dayOfWeek    = d.getDay();
-              const isToday      = dayOfWeek === todayIdx;
-              const isSelected   = dayOfWeek === calSelectedDay;
-              const isWorkoutDay = sortedSelectedDays.includes(dayOfWeek);
+              const dayOfWeek = d.getDay();
+              const isSelected = dayOfWeek === calSelectedDay;
+              const hasWorkout = sortedSelectedDays.includes(dayOfWeek);
               return (
-                <button key={i} onClick={() => setCalSelectedDay(dayOfWeek)} style={{
-                  flex:1, display:"flex", flexDirection:"column", alignItems:"center",
-                  gap:4, padding:"10px 0", borderRadius:18,
-                  background: isSelected ? "var(--color-forest-canopy)" : "transparent",
-                  border:`1px solid ${isSelected ? "var(--color-forest-canopy)" : "var(--color-stone)"}`,
-                  opacity: !isWorkoutDay && !isToday && !isSelected ? 0.3 : 1,
-                  cursor: isWorkoutDay || isToday ? "pointer" : "default",
-                  transition:".15s",
-                }}>
-                  <span style={{ fontSize:9, fontWeight:700, letterSpacing:".08em",
-                    textTransform:"uppercase",
-                    color: isSelected ? "rgba(26,26,26,.6)" : "var(--color-muted-ash)" }}>
-                    {DAYS[dayOfWeek]}
-                  </span>
-                  <span style={{ fontSize:20, fontWeight:700, lineHeight:1, color:"var(--color-ink)" }}>
-                    {d.getDate()}
-                  </span>
-                  {isWorkoutDay && !isSelected && (
-                    <div style={{ width:5, height:5, borderRadius:"50%",
-                      background:"var(--color-forest-canopy)", marginTop:1 }}/>
-                  )}
+                <button key={i} type="button" onClick={() => setCalSelectedDay(dayOfWeek)}
+                  aria-label={DAYS[dayOfWeek] + " " + d.getDate() + (hasWorkout ? ", workout scheduled" : ", rest day")}
+                  aria-pressed={isSelected}
+                  className={"week-day" + (isSelected ? " selected" : "") + (hasWorkout ? " has-workout" : "")}>
+                  <span>{DAYS[dayOfWeek]}</span>
+                  <strong>{d.getDate()}</strong>
                 </button>
               );
             })}
           </div>
 
-          {/* Greeting */}
-          <div style={{ marginBottom:20 }}>
-            <p style={{ fontSize:13, color:"var(--color-muted-ash)", marginBottom:4 }}>
-              {DAYS[todayIdx]}, {MONTHS[today.getMonth()]} {today.getDate()}
-            </p>
-            <h1 style={{ fontSize:34, fontWeight:800, letterSpacing:"-.02em",
-              lineHeight:1.05, color:"#1A1A1A" }}>
-              Hi {userName || "there"}
-            </h1>
-          </div>
-
           {/* Workout card: driven by selected calendar day */}
           {selectedWorkout ? (
             <>
-              <div className="card pad">
+              <div className="card pad workout-feature-card">
                 <div className="eyebrow">
                   {isSelectedToday ? "Today's Workout" : `${DAYS[calSelectedDay]}'s Workout`}
                 </div>
@@ -1856,8 +1804,9 @@ export default function Page() {
                 </div>
                 <h3 style={{ marginBottom:8 }}>Rest Day</h3>
                 <p style={{ fontSize:14, color:"var(--color-muted-ash)", margin:0, lineHeight:1.6 }}>
-                  Recovery is part of the plan. Stay hydrated, sleep well, and come back stronger.
+                  No workout scheduled. You can train on any day.
                 </p>
+                <button type="button" className="btn secondary" style={{width:"100%",marginTop:18}} onClick={() => setScreen("routines")}>Browse workouts</button>
               </div>
             </>
           )}
@@ -1871,12 +1820,8 @@ export default function Page() {
   if (screen === "routines") return (
     <div className="app">
       <div className="mobile-frame" style={{ display:"flex", flexDirection:"column" }}>
-        <div className="statusbar">
-          <span>{String(today.getHours()).padStart(2,"0")}:{String(today.getMinutes()).padStart(2,"0")}</span>
-          <div className="icons"><span className="dot"/><span className="dot"/><span className="pill"/></div>
-        </div>
         <main style={{ flex:1, overflowY:"auto", paddingBottom:16 }}>
-          <h2 style={{ fontSize:28, fontWeight:800, color:"var(--color-ink)", marginBottom:4 }}>Routines</h2>
+          <h2 style={{ fontSize:32, fontWeight:750, color:"var(--color-ink)", marginBottom:4, letterSpacing:"-.045em" }}>Workouts</h2>
           <p style={{ fontSize:13, color:"var(--color-muted-ash)", marginBottom:16 }}>Pick a workout and start tracking</p>
 
           <input ref={importFileRef} type="file" accept=".json"
@@ -1896,7 +1841,7 @@ export default function Page() {
               const totalSets = w.exercises.reduce((s, e) => s + e.sets, 0);
               const estMin    = Math.round(totalSets * 2.5);
               return (
-                <div key={w.name} className="card pad" style={{ borderRadius:20 }}>
+                <div key={w.name} className="card pad routine-card">
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
                     <div>
                       <div style={{ fontSize:11, fontWeight:700, textTransform:"uppercase",
@@ -1937,10 +1882,6 @@ export default function Page() {
   if (screen === "profile") return (
     <div className="app">
       <div className="mobile-frame" style={{ display:"flex", flexDirection:"column" }}>
-        <div className="statusbar">
-          <span>{String(today.getHours()).padStart(2,"0")}:{String(today.getMinutes()).padStart(2,"0")}</span>
-          <div className="icons"><span className="dot"/><span className="dot"/><span className="pill"/></div>
-        </div>
         <main style={{ flex:1, overflowY:"auto", paddingBottom:16 }}>
           {/* Avatar + name */}
           <div style={{ display:"flex", flexDirection:"column", alignItems:"center", marginBottom:24 }}>
@@ -1957,8 +1898,8 @@ export default function Page() {
           {/* Stats banner */}
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:20 }}>
             {[
-              { label:"Total Workouts", value: workoutCount || 1 },
-              { label:"Week Streak",    value: streak || 1 },
+              { label:"Workouts", value: workoutCount },
+              { label:"Day streak", value: streak },
             ].map(s => (
               <div key={s.label} className="card pad" style={{ borderRadius:16, textAlign:"center" }}>
                 <div style={{ fontSize:26, fontWeight:800, color:"var(--color-ink)" }}>{s.value}</div>
@@ -1974,22 +1915,16 @@ export default function Page() {
               This Week
             </div>
             <div style={{ display:"flex", gap:6, alignItems:"flex-end", height:56 }}>
-              {["M","T","W","T","F","S","S"].map((d, i) => {
-                const heights = [45, 0, 38, 0, 52, 0, 0];
-                const h = heights[i];
-                const isToday = i === (today.getDay() + 6) % 7;
+              {weeklyActivity.map((day, i) => {
+                const height = day.count ? Math.max(12, Math.round(day.count / maxWeeklyActivity * 100)) : 4;
                 return (
-                  <div key={i} style={{ flex:1, display:"flex", flexDirection:"column",
-                    alignItems:"center", gap:4 }}>
-                    <div style={{ width:"100%", height:56, display:"flex", alignItems:"flex-end" }}>
-                      <div style={{ width:"100%", height: h ? `${h}%` : 4, borderRadius:4,
-                        background: h > 0
-                          ? isToday ? "var(--color-forest-canopy)" : "rgba(209,244,125,.45)"
-                          : "var(--color-stone)",
-                        transition:".2s" }}/>
+                  <div key={i} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:5 }}
+                    aria-label={day.label + ": " + day.count + " workouts"}>
+                    <div style={{ width:"100%", height:66, display:"flex", alignItems:"flex-end" }}>
+                      <div style={{ width:"100%", height:day.count ? height + "%" : 4, borderRadius:5,
+                        background:day.count ? day.today ? "var(--color-forest-canopy)" : "#9eb982" : "var(--color-stone)" }} />
                     </div>
-                    <span style={{ fontSize:9, fontWeight:700,
-                      color: isToday ? "var(--color-ink)" : "var(--color-muted-ash)" }}>{d}</span>
+                    <span style={{ fontSize:11, fontWeight:day.today ? 750 : 550, color:day.today ? "var(--color-ink)" : "var(--color-muted-ash)" }}>{day.label}</span>
                   </div>
                 );
               })}
@@ -2002,23 +1937,29 @@ export default function Page() {
             Recent Workouts
           </div>
           <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-            {[
-              { name:"Shoulder & Squat Day", date:"Today",      sets:9,  reps:108 },
-              { name:"Legs & Core Day",     date:"3 days ago", sets:10, reps:100 },
-              { name:"Push & Legs Day",     date:"5 days ago", sets:10, reps:110 },
-            ].map(r => (
-              <div key={r.name + r.date} className="card pad"
-                style={{ borderRadius:16, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                <div>
-                  <div style={{ fontSize:14, fontWeight:700, color:"var(--color-ink)" }}>{r.name}</div>
-                  <div style={{ fontSize:11, color:"var(--color-muted-ash)", marginTop:1 }}>{r.date}</div>
+            {sessionHistory.length ? sessionHistory.slice(0, 5).map((session) => {
+              const totals = sessionTotals(session);
+              return (
+                <div key={session.id} className="card pad" style={{ borderRadius:16, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <div>
+                    <div style={{ fontSize:14, fontWeight:700, color:"var(--color-ink)" }}>{session.workoutName}</div>
+                    <div style={{ fontSize:12, color:"var(--color-muted-ash)", marginTop:3 }}>
+                      {new Date(session.completedAt).toLocaleDateString(undefined, {month:"short",day:"numeric"})} · {session.mode === "camera" ? "Phone camera" : "Manual"}
+                    </div>
+                  </div>
+                  <div style={{ textAlign:"right" }}>
+                    <div style={{ fontSize:13, fontWeight:700, color:"var(--color-ink)" }}>{totals.sets} sets</div>
+                    <div style={{ fontSize:12, color:"var(--color-muted-ash)" }}>{totals.reps} reps</div>
+                  </div>
                 </div>
-                <div style={{ textAlign:"right" }}>
-                  <div style={{ fontSize:12, fontWeight:700, color:"var(--color-ink)" }}>{r.sets} sets</div>
-                  <div style={{ fontSize:11, color:"var(--color-muted-ash)" }}>{r.reps} reps</div>
-                </div>
+              );
+            }) : (
+              <div className="card pad">
+                <div style={{fontSize:15,fontWeight:700,marginBottom:6}}>No workouts yet</div>
+                <p style={{fontSize:13,marginBottom:16}}>Finish your first workout to start tracking progress here.</p>
+                <button className="btn secondary" style={{width:"100%"}} onClick={() => setScreen("routines")}>Browse workouts</button>
               </div>
-            ))}
+
           </div>
         </main>
         {BottomNav}
@@ -2030,10 +1971,6 @@ export default function Page() {
   if (screen === "workout") return (
     <div className="app">
       <div className="mobile-frame">
-        <div className="statusbar">
-          <span>{String(today.getHours()).padStart(2,"0")}:{String(today.getMinutes()).padStart(2,"0")}</span>
-          <div className="icons"><span className="dot"/><span className="dot"/><span className="pill"/></div>
-        </div>
         <main>
           {/* Back */}
           <button onClick={() => setScreen(prevScreenRef.current)} style={{
@@ -2042,6 +1979,18 @@ export default function Page() {
             fontSize:13, fontWeight:600, marginBottom:18,
           }}>← Back</button>
 
+          {/* Header */}
+          <div style={{ marginBottom:16 }}>
+            <p className="eyebrow" style={{ marginBottom:4 }}>Ready to train</p>
+            <h2 style={{ fontSize:32,
+              fontWeight:400, color:"var(--color-ink)", lineHeight:1 }}>{activeWorkoutRef.current.name}</h2>
+          </div>
+
+          <button type="button" className="workout-preview-toggle" onClick={() => setShowFormDemo((value) => !value)} aria-expanded={showFormDemo}>
+            {showFormDemo ? "Hide movement preview" : "Preview first movement"} <span aria-hidden="true">{showFormDemo ? "−" : "+"}</span>
+          </button>
+          {showFormDemo && (
+            <div className="workout-demo">
           {/* Form animation */}
           <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:4, marginBottom:20 }}>
             <span className="eyebrow" style={{ marginBottom:2 }}>Correct Form</span>
@@ -2275,12 +2224,8 @@ export default function Page() {
             )}
           </div>
 
-          {/* Header */}
-          <div style={{ marginBottom:16 }}>
-            <p className="eyebrow" style={{ marginBottom:4 }}>Ready to train</p>
-            <h2 style={{ fontSize:32,
-              fontWeight:400, color:"var(--color-ink)", lineHeight:1 }}>{activeWorkoutRef.current.name}</h2>
-          </div>
+            </div>
+          )}
 
           {/* Stats */}
           <div className="metric-row" style={{ marginBottom:20 }}>
@@ -2325,7 +2270,7 @@ export default function Page() {
           <div className="sticky-cta">
             <button className="btn dark" style={{ width:"100%", fontSize:16 }}
               onClick={() => { sessionSetsRef.current = []; setReps(0); setExIdx(0); setCurrentSet(1); if (mode === "manual") setScreen("manual"); else { setTutorialStep(1); setScreen("tutorial"); } }}>
-              Start
+              {mode === "manual" ? "Start manual workout" : "Start camera workout"}
             </button>
           </div>
         </main>
