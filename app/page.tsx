@@ -1959,7 +1959,7 @@ export default function Page() {
                 <p style={{fontSize:13,marginBottom:16}}>Finish your first workout to start tracking progress here.</p>
                 <button className="btn secondary" style={{width:"100%"}} onClick={() => setScreen("routines")}>Browse workouts</button>
               </div>
-
+            )}
           </div>
         </main>
         {BottomNav}
