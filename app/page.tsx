@@ -139,6 +139,7 @@ export default function Page() {
   const [completedSession, setCompletedSession] = useState<WorkoutSession | null>(null);
   const [sessionHistory, setSessionHistory] = useState<WorkoutSession[]>([]);
   const [showFormDemo, setShowFormDemo] = useState(false);
+  const [confirmCameraExit, setConfirmCameraExit] = useState(false);
   const sessionSetsRef = useRef<LoggedSet[]>([]);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [tutorialStep, setTutorialStep] = useState(1);
@@ -273,6 +274,7 @@ export default function Page() {
   const exitCamera = useCallback(() => {
     stopCamera();
     stopVoiceRecognition();
+    setConfirmCameraExit(false);
     if (restIntervalRef.current) { clearInterval(restIntervalRef.current); restIntervalRef.current = null; }
     window.speechSynthesis?.cancel();
     restActiveRef.current = false;
@@ -377,9 +379,8 @@ export default function Page() {
   }, [speak]);
 
   const endWorkout = useCallback(() => {
-    speak("Ending workout. Great job today!", true);
-    setTimeout(() => exitCamera(), 1800);
-  }, [speak, exitCamera]);
+    setConfirmCameraExit(true);
+  }, []);
 
   const startVoiceRecognition = useCallback(() => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -402,7 +403,7 @@ export default function Page() {
               triggerVoiceCmd("Skipping set", "⏭", advanceAfterRest);
             } else if (text.includes("end workout") || text.includes("finish")) {
               speak("Ending workout.", true);
-              triggerVoiceCmd("Ending workout", "🏁", exitCamera);
+              triggerVoiceCmd("Ending workout", "🏁", () => setConfirmCameraExit(true));
             } else if (text.includes("pause")) {
               speak("Pausing workout.", true);
               triggerVoiceCmd("Pausing workout", "⏸", pauseWorkout);
@@ -2246,7 +2247,7 @@ export default function Page() {
             {MODES.map(m => {
               const isActive = mode === m.id;
               return (
-                <button key={m.id} onClick={() => setMode(m.id)} style={{
+                <button key={m.id} type="button" aria-pressed={isActive} onClick={() => setMode(m.id)} style={{
                   display:"flex", alignItems:"center", gap:12, padding:"12px 16px",
                   borderRadius:16, cursor:"pointer", textAlign:"left", transition:".15s",
                   background: isActive ? "rgba(209,244,125,.3)" : "var(--color-parchment)",
@@ -2254,8 +2255,8 @@ export default function Page() {
                 }}>
                   <span style={{ fontSize:18, lineHeight:1 }}>{m.icon}</span>
                   <div style={{ flex:1 }}>
-                    <div style={{ fontWeight:600, fontSize:14, color:"var(--color-ink)" }}>{m.label}</div>
-                    <div style={{ fontSize:11, color:"var(--color-muted-ash)", marginTop:1 }}>{m.sub}</div>
+                    <div style={{ fontWeight:650, fontSize:15, color:"var(--color-ink)" }}>{m.label}</div>
+                    <div style={{ fontSize:12, color:"var(--color-muted-ash)", marginTop:4 }}>{m.sub}</div>
                   </div>
                   {isActive && (
                     <div style={{ width:20, height:20, borderRadius:"50%",
@@ -2928,7 +2929,7 @@ export default function Page() {
             <div style={{ position:"absolute", top:18, left:"50%", transform:"translateX(-50%)",
               display:"flex", alignItems:"center", gap:10 }}>
               <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                <div style={{ width:7, height:7, borderRadius:"50%", background:"#f23",
+                <div style={{ width:7, height:7, borderRadius:"50%", background:"var(--color-forest-canopy)",
                   animation:"pulsedot 1.2s ease-in-out infinite" }}/>
                 <span style={{ color:"rgba(255,255,255,.55)", fontSize:10,
                   fontWeight:700, letterSpacing:".12em" }}>LIVE</span>
@@ -3079,27 +3080,37 @@ export default function Page() {
               </div>
             )}
 
-            {/* Bottom controls */}
+            {/* Essential actions remain accessible while camera tracking */}
             <div style={{ position:"absolute", bottom:24, left:18, right:18,
-              display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-              <button onClick={exitCamera} style={{
-                background:"rgba(0,0,0,.4)", backdropFilter:"blur(14px)",
-                WebkitBackdropFilter:"blur(14px)",
-                border:"1px solid rgba(255,255,255,.15)", borderRadius:12,
-                padding:"10px 20px", color:"rgba(255,255,255,.75)",
-                fontSize:13, fontWeight:600, cursor:"pointer" }}>← Back</button>
-
-              <div style={{
-                background:"rgba(0,0,0,.35)", backdropFilter:"blur(10px)",
-                border:"1px solid rgba(255,255,255,.12)", borderRadius:10,
-                padding:"6px 14px", display:"flex", alignItems:"center", gap:6,
-              }}>
-                <span style={{ fontSize:13 }}>🎤</span>
-                <span style={{ fontSize:11, color:"rgba(255,255,255,.55)", fontWeight:600 }}>
-                  {voiceEnabled ? '"skip" · "pause" · "end workout"' : "Voice optional"}
-                </span>
-              </div>
+              display:"flex", justifyContent:"space-between", alignItems:"center", gap:12 }}>
+              <button type="button" onClick={() => setConfirmCameraExit(true)} style={{
+                minWidth:88, minHeight:46, background:"rgba(0,0,0,.55)", backdropFilter:"blur(14px)",
+                border:"1px solid rgba(255,255,255,.2)", borderRadius:13,
+                padding:"10px 16px", color:"#fff", fontSize:14, fontWeight:650, cursor:"pointer" }}>End</button>
+              <button type="button" onClick={pauseWorkout} disabled={paused || restActive} style={{
+                minWidth:88, minHeight:46, background:"rgba(255,255,255,.92)", backdropFilter:"blur(14px)",
+                border:"1px solid rgba(255,255,255,.25)", borderRadius:13,
+                padding:"10px 16px", color:"#172017", fontSize:14, fontWeight:700,
+                cursor:"pointer", opacity:restActive ? .45 : 1 }}>Pause</button>
             </div>
+
+            {confirmCameraExit && (
+              <div style={{ position:"absolute", inset:0, zIndex:90, padding:28,
+                display:"flex", flexDirection:"column", alignItems:"stretch", justifyContent:"center",
+                background:"rgba(8,12,9,.94)", backdropFilter:"blur(18px)" }} role="dialog" aria-modal="true" aria-label="End workout">
+                <p style={{ color:"rgba(255,255,255,.6)", fontSize:11, fontWeight:750, letterSpacing:".14em", marginBottom:10 }}>END WORKOUT</p>
+                <h2 style={{ color:"white", fontSize:30, letterSpacing:"-.045em", marginBottom:12 }}>Leave this workout?</h2>
+                <p style={{ color:"rgba(255,255,255,.68)", fontSize:15, lineHeight:1.6, marginBottom:28 }}>
+                  Your unfinished camera session will not be saved.
+                </p>
+                <button type="button" onClick={() => setConfirmCameraExit(false)} style={{
+                  background:"var(--color-forest-canopy)", color:"#192019", border:0, borderRadius:14,
+                  minHeight:54, fontSize:16, fontWeight:750, marginBottom:10 }}>Keep training</button>
+                <button type="button" onClick={exitCamera} style={{
+                  background:"transparent", color:"#fff", border:"1px solid rgba(255,255,255,.28)",
+                  borderRadius:14, minHeight:50, fontSize:14, fontWeight:650 }}>Discard workout</button>
+              </div>
+            )}
 
             {/* ── REST OVERLAY ── */}
             {restActive && (() => {
